@@ -3,15 +3,17 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack",
+    "dev": "next dev --webpack",
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf .next out"
   },
   "dependencies": {
+    "@midnight-ntwrk/compact-js": "^2.5.0",
     "@midnight-ntwrk/compact-runtime": "^0.15.0",
     "@midnight-ntwrk/dapp-connector-api": "^4.0.1",
+    "@midnight-ntwrk/ledger-v8": "^8.0.3",
     "@midnight-ntwrk/midnight-js-contracts": "^4.0.4",
     "@midnight-ntwrk/midnight-js-fetch-zk-config-provider": "^4.0.4",
     "@midnight-ntwrk/midnight-js-indexer-public-data-provider": "^4.0.4",
@@ -19,6 +21,9 @@
     "@midnight-ntwrk/midnight-js-network-id": "^4.0.4",
     "@midnight-ntwrk/midnight-js-types": "^4.0.4",
     "@midnight-ntwrk/midnight-js-utils": "^4.0.4",
+    "@midnight-ntwrk/onchain-runtime-v3": "^3.0.0",
+    "@midnight-ntwrk/platform-js": "^2.2.4",
+    "@midnight-ntwrk/wallet-sdk-address-format": "^3.1.0",
     "@tanstack/react-query": "^5.28.0",
     "next": "latest",
     "react": "^19.0.0",
@@ -26,9 +31,12 @@
     "rxjs": "^7.8.2"
   },
   "devDependencies": {
+    "@tailwindcss/postcss": "^4.2.2",
     "@types/node": "^22",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "postcss": "^8.5.10",
+    "tailwindcss": "^4.2.2",
     "typescript": "^5.7.0"
   }
 }

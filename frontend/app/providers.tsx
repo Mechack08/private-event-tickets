@@ -2,6 +2,7 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
+import { WalletProvider } from "@/contexts/WalletContext";
 
 // NOTE: Do NOT import any @midnight-ntwrk/* module here.
 // Midnight SDK modules (especially ledger-v8) call readFileSync at load time
@@ -19,6 +20,8 @@ export function Providers({ children }: { children: ReactNode }) {
   );
 
   return (
-    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    <QueryClientProvider client={queryClient}>
+      <WalletProvider>{children}</WalletProvider>
+    </QueryClientProvider>
   );
 }
