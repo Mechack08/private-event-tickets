@@ -14,9 +14,9 @@
     "install:all": "pnpm install",
 
     "// ── COMPACT TOOLCHAIN ─────────────────────────────────────────────": "",
-    "compact:install": "compact toolchain install 0.30.0",
-    "compact:version": "compact --version",
-    "compact:list": "compact toolchain list",
+    "compact:install": "compact update +0.30.0",
+    "compact:version": "compact compile +0.30.0 --version",
+    "compact:list": "compact list",
 
     "// ── CONTRACT ──────────────────────────────────────────────────────": "",
 
