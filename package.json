@@ -1,0 +1,65 @@
+{
+  "name": "private-event-tickets",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Privacy-preserving event ticketing dApp on Midnight Network",
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=9"
+  },
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+
+    "// ── INSTALLATION ──────────────────────────────────────────────────": "",
+    "install:all": "pnpm install",
+
+    "// ── COMPACT TOOLCHAIN ─────────────────────────────────────────────": "",
+    "compact:install": "compact toolchain install 0.30.0",
+    "compact:version": "compact --version",
+    "compact:list": "compact toolchain list",
+
+    "// ── CONTRACT ──────────────────────────────────────────────────────": "",
+
+    "contract:check": "pnpm --filter @private-event-tickets/contract check",
+    "contract:build": "pnpm --filter @private-event-tickets/contract build",
+    "contract:build:skip-zk": "pnpm --filter @private-event-tickets/contract build:skip-zk",
+    "contract:copy": "pnpm --filter @private-event-tickets/contract copy-to-frontend",
+    "contract:clean": "pnpm --filter @private-event-tickets/contract clean",
+
+    "// ── FULL CONTRACT PIPELINE ────────────────────────────────────────": "",
+
+    "contract:setup": "pnpm run contract:check && pnpm run contract:build && pnpm run contract:copy",
+    "contract:setup:fast": "pnpm run contract:build:skip-zk && pnpm run contract:copy",
+
+    "// ── SDK ───────────────────────────────────────────────────────────": "",
+
+    "sdk:build": "pnpm --filter @private-event-tickets/sdk build",
+    "sdk:typecheck": "pnpm --filter @private-event-tickets/sdk typecheck",
+    "sdk:clean": "pnpm --filter @private-event-tickets/sdk clean",
+
+    "// ── FRONTEND ──────────────────────────────────────────────────────": "",
+
+    "dev": "pnpm --filter @private-event-tickets/frontend dev",
+    "build:frontend": "pnpm --filter @private-event-tickets/frontend build",
+    "start": "pnpm --filter @private-event-tickets/frontend start",
+    "typecheck:frontend": "pnpm --filter @private-event-tickets/frontend typecheck",
+
+    "// ── PROOF SERVER (Docker) ─────────────────────────────────────────": "",
+
+    "proof-server:start": "docker run -d --rm -p 6300:6300 --name midnight-proof-server midnightntwrk/proof-server",
+    "proof-server:stop": "docker stop midnight-proof-server 2>/dev/null || echo 'Proof server not running'",
+    "proof-server:logs": "docker logs -f midnight-proof-server",
+    "proof-server:status": "docker ps --filter name=midnight-proof-server --format 'table {{.Names}}\\t{{.Status}}\\t{{.Ports}}'",
+
+    "// ── COMBINED ──────────────────────────────────────────────────────": "",
+
+    "typecheck": "pnpm -r typecheck",
+    "clean": "pnpm -r clean",
+
+    "build": "pnpm run sdk:build && pnpm run build:frontend",
+    "build:all": "pnpm run contract:setup && pnpm run sdk:build && pnpm run build:frontend",
+
+    "dev:full": "pnpm run proof-server:start && pnpm run dev"
+
+  }
+}

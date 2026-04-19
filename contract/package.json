@@ -1,0 +1,26 @@
+{
+  "name": "@private-event-tickets/contract",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Compact smart contract source for Private Event Tickets",
+  "scripts": {
+    "// ── SYNTAX CHECK (fast, no ZK key generation) ──────────────────────": "",
+    "check": "compact compile +0.30.0 --skip-zk event-tickets.compact ../generated",
+
+    "// ── FULL BUILD with ZK proving keys (~5-10 min) ─────────────────────": "",
+    "build": "compact compile +0.30.0 event-tickets.compact ../generated",
+
+    "// ── COMPILE without ZK — for CI or rapid iteration ─────────────────": "",
+    "build:skip-zk": "compact compile +0.30.0 --skip-zk event-tickets.compact ../generated",
+
+    "// ── COPY artefacts into frontend/public so FetchZkConfigProvider works": "",
+    "copy-to-frontend": "mkdir -p ../frontend/public/contracts/event-tickets && cp -r ../generated/managed/event-tickets/contract/* ../frontend/public/contracts/event-tickets/",
+
+    "// ── REMOVE generated output ─────────────────────────────────────────": "",
+    "clean": "rm -rf ../generated",
+
+    "// ── PIPELINE helpers ────────────────────────────────────────────────": "",
+    "setup": "pnpm run build && pnpm run copy-to-frontend",
+    "setup:fast": "pnpm run build:skip-zk && pnpm run copy-to-frontend"
+  }
+}
