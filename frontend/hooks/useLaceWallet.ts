@@ -69,7 +69,7 @@ export function useLaceWallet(): LaceWalletState {
         );
       }
 
-      const initialApi = Object.values(midnightObj)[0] as InitialAPI;
+      const initialApi = Object.values(midnightObj)[0] as InitialAPI & { enable?: (name: string) => Promise<WalletConnectedAPI> };
       if (typeof initialApi?.enable !== "function") {
         throw new Error("Wallet found but does not expose an enable() method.");
       }

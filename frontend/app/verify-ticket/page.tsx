@@ -23,7 +23,7 @@ import type { TicketSecret } from "@/../../sdk/src/types";
 type VerifyPhase = "idle" | "parsing" | "proving" | "done" | "error";
 
 export default function VerifyTicketPage() {
-  const { status, wallet, shieldedPubkey } = useLaceWallet();
+  const { status, wallet } = useLaceWallet();
 
   const [secretJson, setSecretJson] = useState("");
   const [contractOverride, setContractOverride] = useState("");
@@ -50,10 +50,9 @@ export default function VerifyTicketPage() {
       secret = JSON.parse(secretJson) as TicketSecret;
       if (
         typeof secret.contractAddress !== "string" ||
-        typeof secret.ticketId !== "number" ||
         typeof secret.nonce !== "string"
       ) {
-        throw new Error("JSON is missing required fields.");
+        throw new Error("JSON is missing required fields (contractAddress, nonce).");
       }
     } catch (err) {
       setError(
@@ -72,7 +71,7 @@ export default function VerifyTicketPage() {
       // ── Dynamic imports ─────────────────────────────────────────────────
       const [
         { createEventTicketProviders },
-        { EventTicketAPI, hexToBigint, pubkeyToField },
+        { EventTicketAPI, hexToBigint },
         { PREPROD_CONFIG },
       ] = await Promise.all([
         import("@/../../sdk/src/providers"),
@@ -83,24 +82,10 @@ export default function VerifyTicketPage() {
       const providers = await createEventTicketProviders(wallet, PREPROD_CONFIG);
       const api = await EventTicketAPI.join(providers, resolvedAddress);
 
-      // ── Derive holder pubkey field from the connected wallet ────────────
-      // We always use the wallet's own key — NEVER a value from user input —
-      // so the proof is cryptographically bound to the caller's identity.
-      if (!shieldedPubkey) {
-        throw new Error("Could not retrieve your shielded public key from the wallet.");
-      }
-      const pubkeyBytes = Uint8Array.from(
-        Buffer.from(shieldedPubkey.replace(/^0x/, ""), "hex"),
-      );
-      const holderPubkeyField = pubkeyToField(pubkeyBytes);
-
       // ── Generate ZK proof and submit ────────────────────────────────────
+      // The witness supplies the nonce; the circuit returns a boolean.
       const nonce = hexToBigint(secret.nonce);
-      const { verified: ok, txId: id } = await api.verifyTicket(
-        secret.ticketId,
-        nonce,
-        holderPubkeyField,
-      );
+      const { verified: ok, txId: id } = await api.verifyTicket(nonce);
 
       setVerified(ok);
       setTxId(id);
@@ -139,7 +124,7 @@ export default function VerifyTicketPage() {
             <textarea
               id="secretJson"
               rows={6}
-              placeholder={'{\n  "contractAddress": "0x…",\n  "ticketId": 0,\n  "nonce": "0x…",\n  "holderPubkeyField": "0x…"\n}'}
+              placeholder={'{\n  "contractAddress": "0x…",\n  "nonce": "0x…"\n}'}
               value={secretJson}
               onChange={(e) => setSecretJson(e.target.value)}
               required

@@ -56,7 +56,7 @@ export default function CreateEventPage() {
       // Initialise the event on-chain
       const { txId } = await api.createEvent(
         eventName.trim(),
-        parseInt(maxTickets, 10),
+        BigInt(maxTickets),
       );
 
       setResult({ contractAddress: api.contractAddress, txId });

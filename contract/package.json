@@ -14,7 +14,7 @@
     "build:skip-zk": "compact compile +0.30.0 --skip-zk event-tickets.compact ../generated",
 
     "// ── COPY artefacts into frontend/public so FetchZkConfigProvider works": "",
-    "copy-to-frontend": "mkdir -p ../frontend/public/contracts/event-tickets && cp -r ../generated/managed/event-tickets/contract/* ../frontend/public/contracts/event-tickets/",
+    "copy-to-frontend": "mkdir -p ../frontend/public/contracts/event-tickets && cp -r ../generated/contract/* ../frontend/public/contracts/event-tickets/ && cp -r ../generated/keys ../frontend/public/contracts/event-tickets/",
 
     "// ── REMOVE generated output ─────────────────────────────────────────": "",
     "clean": "rm -rf ../generated",

@@ -51,7 +51,7 @@ export async function createEventTicketProviders(
   //       definitions and adjust the second `fetch` argument if required.
   const zkConfigProvider = new FetchZkConfigProvider(
     `${typeof window !== "undefined" ? window.location.origin : ""}/contracts/${CONTRACT_NAME}`,
-    (url: string, init?: RequestInit) =>
+    (url: URL | RequestInfo, init?: RequestInit) =>
       typeof window !== "undefined"
         ? window.fetch(url, init)
         : fetch(url, init),
@@ -65,7 +65,8 @@ export async function createEventTicketProviders(
   //       async initialisation call in some SDK versions.  Check the type
   //       definitions and add `await` as needed.
   const privateStateProvider = levelPrivateStateProvider({
-    contractName: CONTRACT_NAME,
+    privateStoragePasswordProvider: async () => CONTRACT_NAME,
+    accountId: CONTRACT_NAME,
   });
 
   // ── Public data provider (Midnight indexer GraphQL) ──────────────────

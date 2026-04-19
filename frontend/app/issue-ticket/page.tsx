@@ -19,7 +19,6 @@ import type { TicketSecret } from "@/../../sdk/src/types";
 
 interface IssueResult {
   txId: string;
-  ticketId: number;
   secret: TicketSecret;
 }
 
@@ -27,8 +26,6 @@ export default function IssueTicketPage() {
   const { status, wallet } = useLaceWallet();
 
   const [contractAddress, setContractAddress] = useState("");
-  const [holderPubkey, setHolderPubkey] = useState("");
-  const [ticketId, setTicketId] = useState("0");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<IssueResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -47,7 +44,7 @@ export default function IssueTicketPage() {
       // ── Dynamic imports ───────────────────────────────────────────────────
       const [
         { createEventTicketProviders },
-        { EventTicketAPI, bigintToHex, pubkeyToField },
+        { EventTicketAPI },
         { PREPROD_CONFIG },
       ] = await Promise.all([
         import("@/../../sdk/src/providers"),
@@ -60,26 +57,12 @@ export default function IssueTicketPage() {
       // Join the existing contract
       const api = await EventTicketAPI.join(providers, contractAddress.trim());
 
-      const id = parseInt(ticketId, 10);
-      const { txId, nonce } = await api.issueTicket(holderPubkey.trim(), id);
+      // issueTicket() auto-generates a random nonce via the witness
+      const { txId, nonce } = await api.issueTicket();
 
-      // Compute the holder's pubkey field for the secret bundle
-      const holderBytes = Uint8Array.from(
-        Buffer.from(
-          holderPubkey.trim().replace(/^0x/, ""),
-          "hex",
-        ),
-      );
-      const holderPubkeyField = pubkeyToField(holderBytes);
+      const secret = api.ticketSecret(nonce);
 
-      const secret: TicketSecret = {
-        contractAddress: contractAddress.trim(),
-        ticketId: id,
-        nonce: bigintToHex(nonce),
-        holderPubkeyField: bigintToHex(holderPubkeyField),
-      };
-
-      setResult({ txId, ticketId: id, secret });
+      setResult({ txId, secret });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -119,29 +102,6 @@ export default function IssueTicketPage() {
               required
             />
 
-            <label htmlFor="holderPubkey">
-              Holder shielded public key (hex)
-            </label>
-            <input
-              id="holderPubkey"
-              type="text"
-              placeholder="0x… (32 bytes, from holder's Lace wallet)"
-              value={holderPubkey}
-              onChange={(e) => setHolderPubkey(e.target.value)}
-              required
-            />
-
-            <label htmlFor="ticketId">Ticket ID (0-based)</label>
-            <input
-              id="ticketId"
-              type="number"
-              min={0}
-              max={99}
-              value={ticketId}
-              onChange={(e) => setTicketId(e.target.value)}
-              required
-            />
-
             <button
               type="submit"
               className="btn-primary"
@@ -167,7 +127,7 @@ export default function IssueTicketPage() {
 
           {result && (
             <div className="status success">
-              <strong>Ticket #{result.ticketId} issued!</strong>
+              <strong>Ticket issued!</strong>
               <br />
               Tx ID: <code>{result.txId}</code>
               <br />
@@ -176,7 +136,8 @@ export default function IssueTicketPage() {
               <pre>{JSON.stringify(result.secret, null, 2)}</pre>
               <small>
                 The attendee pastes this JSON into the Verify Ticket page to
-                prove ownership. Never share this with anyone else.
+                prove ownership. Keep this safe — it is the only way to prove
+                ticket ownership.
               </small>
             </div>
           )}

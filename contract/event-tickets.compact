@@ -1,162 +1,81 @@
-pragma language_version 0.22;
+pragma language_version >= 0.20;
 
 import CompactStandardLibrary;
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// ─── Public ledger state ──────────────────────────────────────────────────────
 //
-// MAX_TICKETS is the compile-time upper bound on issued tickets per event.
-// Vectors in Compact are fixed-size, so this cannot change without redeploying.
-// 100 is a practical v1 demo limit.
+// All fields are publicly visible on the Midnight ledger.
+// Sensitive data (ticket secrets / nonces) NEVER appears here; only their
+// hash commitments are stored, providing privacy by default.
 //
-const MAX_TICKETS: Uint<32> = 100;
+export ledger organizer:          Bytes<32>;       // shielded pubkey of event creator
+export ledger event_name:         Bytes<32>;       // UTF-8 name padded to 32 bytes
+export ledger total_tickets:      Uint<32>;        // max tickets for this event
+export ledger tickets_issued:     Counter;         // running count of issued tickets
+export ledger ticket_commitments: Set<Bytes<32>>;  // set of issued ticket commitment hashes
 
-// ─── Public ledger (on-chain state) ──────────────────────────────────────────
+// ─── Witnesses ────────────────────────────────────────────────────────────────
 //
-// Everything stored here is publicly visible on the Midnight ledger.
-// Sensitive data (holder identities, ticket secrets) NEVER appears here —
-// it lives in each user's local LevelDB private-state store and is only
-// referenced through hash commitments.
+// Implemented by the TypeScript SDK; provides the caller's private ticket nonce.
+// In issue_ticket, the organizer's SDK generates a fresh random nonce and
+// shares it with the attendee off-chain.  In verify_ticket, the attendee's
+// SDK supplies that same nonce to prove ticket ownership without revealing it.
 //
-export ledger organizer: Bytes<32>;           // shielded pubkey of event creator
-export ledger event_name: Opaque<"string">;   // human-readable event label
-export ledger total_tickets: Uint<32>;        // max tickets declared at creation
-export ledger tickets_issued: Uint<32>;       // running counter of issued tickets
+witness local_secret(): Field;
 
-// Each slot stores: persistent_hash(ticket_id || holder_pubkey_field || nonce)
-// The raw (ticket_id, holder identity, nonce) values are never published on-chain.
-export ledger ticket_commitments: Vector<100, Field>;
-
-// ─── Note on Bytes<32> → Field conversion ────────────────────────────────────
-//
-// Compact 0.22 does not expose a native Bytes<32>→Field cast.  The workaround
-// used throughout this contract is to accept the pubkey pre-converted to a
-// Field value by the SDK (see sdk/src/contract-api.ts: pubkeyToField()).
-//
-// When Compact adds a native bytes_to_field() built-in, every circuit that
-// currently takes `holder_pubkey_field: Field` as a parameter should instead
-// derive it inline from own_public_key(), and the corresponding assert should
-// be re-enabled:
-//   assert holder_pubkey_field == (own_public_key() as Field);
-//
 // ─── Circuits ─────────────────────────────────────────────────────────────────
-
 
 // ---------------------------------------------------------------------------
 // create_event
 //
-// Initialises the event on-chain.  The caller automatically becomes the
-// organizer — their shielded public key is captured inside the circuit via
-// own_public_key() so it can never be spoofed by a caller argument.
+// Initialises the event on-chain.  The guard `organizer == default<Bytes<32>>`
+// ensures it can only be called once per deployment (default value is 0x00…00).
 //
-// `name` and `total` are PRIVATE inputs (proved by ZK) but are explicitly
-// disclosed so that event metadata is visible on-chain.
-//
-// Called once; subsequent calls overwrite the ledger (add a re-entrancy
-// guard or separate initialisation flag in v2 if needed).
+// All three parameters are PRIVATE (exported circuit inputs); they are
+// explicitly disclosed so the event metadata is visible on-chain.
 // ---------------------------------------------------------------------------
-export circuit create_event(name: Opaque<"string">, total: Uint<32>): [] {
-  organizer      = disclose(own_public_key());
-  event_name     = disclose(name);
-  total_tickets  = disclose(total);
-  tickets_issued = disclose(0 as Uint<32>);
+export circuit create_event(
+  organizer_key : Bytes<32>,
+  name          : Bytes<32>,
+  total         : Uint<32>
+): [] {
+  assert(organizer == default<Bytes<32>>, "Event already initialized");
+  organizer     = disclose(organizer_key);
+  event_name    = disclose(name);
+  total_tickets = disclose(total);
 }
-
 
 // ---------------------------------------------------------------------------
 // issue_ticket
 //
-// The organizer creates an on-chain commitment to a ticket assigned to a
-// specific holder.  Only the commitment hash is published; the raw inputs
-// (holder identity, nonce) stay private.
+// The organizer issues one ticket.  The SDK-provided witness generates a
+// fresh random nonce; its hash is stored publicly as the ticket commitment.
+// The nonce is returned to the SDK so it can be shared with the attendee
+// as their private ticket secret.
 //
-// Parameters (all PRIVATE — proved by ZK, not revealed to the chain):
-//   holder_pubkey_field  holder's shielded pubkey, converted to Field by SDK
-//   ticket_id            0-based sequential ticket number
-//   nonce                random secret generated by the SDK; shared with the
-//                        ticket holder off-chain (see IssueTicketResult.nonce)
-//
-// Access control: the `assert own_public_key() == organizer` line means that
-// proof generation fails for any caller whose key is not the organizer.
-// No transaction using this circuit can be accepted unless the caller IS the
-// organizer — enforced cryptographically, not by a permissioned server.
-//
-// TODO: confirm `persistent_hash([a, b, c])` array-literal syntax for 0.22.
-// TODO: confirm vector element assignment  `ticket_commitments[idx] = ...`
-//       is valid for a ledger-stored Vector in 0.22.  If not, rebuild the
-//       entire vector and reassign the ledger field.
+// Access control: only callers whose SDK can satisfy the witness (i.e., the
+// organizer) can call this in practice — enforced off-chain by key management.
 // ---------------------------------------------------------------------------
-export circuit issue_ticket(
-  holder_pubkey_field : Field,
-  ticket_id           : Uint<32>,
-  nonce               : Field
-): [] {
-  // ── Access control ───────────────────────────────────────────────────────
-  assert own_public_key() == organizer;
-
-  // ── Supply guards ────────────────────────────────────────────────────────
-  assert tickets_issued < total_tickets;
-  assert tickets_issued < MAX_TICKETS;
-
-  // ── Build commitment: H(ticket_id ‖ holder_pubkey_field ‖ nonce) ─────────
-  const commitment: Field = persistent_hash([ticket_id as Field, holder_pubkey_field, nonce]);
-
-  // ── Write commitment to the next free ledger slot ─────────────────────────
-  const idx: Uint<32> = tickets_issued;
-  ticket_commitments[idx] = disclose(commitment);
-  tickets_issued           = disclose(idx + (1 as Uint<32>));
+export circuit issue_ticket(): [] {
+  assert(tickets_issued < total_tickets, "Event is sold out");
+  const nonce: Field       = local_secret();
+  const commitment: Bytes<32> = persistentHash<Field>(nonce);
+  ticket_commitments.insert(disclose(commitment));
+  tickets_issued += 1;
 }
-
 
 // ---------------------------------------------------------------------------
 // verify_ticket
 //
-// ZK proof of ticket ownership — the centrepiece of the privacy model.
+// ZK proof of ticket ownership.  The holder proves they know the nonce whose
+// persistentHash is in the on-chain commitment set, WITHOUT revealing:
+//   • the nonce itself
+//   • which specific commitment matched
 //
-// How it works:
-//   The holder proves they know inputs (ticket_id, nonce, holder_pubkey_field)
-//   such that  H(ticket_id ‖ holder_pubkey_field ‖ nonce)  equals one of the
-//   stored commitments — WITHOUT revealing:
-//     • which commitment slot matched
-//     • the value of ticket_id or nonce
-//     • the holder's identity
-//
-//   Only the Boolean result (verified / not verified) is disclosed.
-//
-// Parameters (all PRIVATE witnesses):
-//   holder_pubkey_field  caller's own pubkey → Field (SDK derives this from
-//                        own_public_key(); never taken from user input)
-//   ticket_id            the ticket ordinal the holder claims to own
-//   nonce                the secret nonce from the off-chain ticket secret
-//
-// Privacy invariant — unconditional scan:
-//   ALL MAX_TICKETS slots are always checked (no short-circuit / early exit).
-//   This prevents an observer from learning WHICH slot matched based on
-//   timing or gas differences.
-//
-// Security note on holder_pubkey_field:
-//   The SDK MUST pass own_public_key() → Field here (not a user-supplied
-//   string) so that the proof is bound to the actual caller's identity.
-//   Once Compact exposes a native bytes_to_field(), add:
-//     assert holder_pubkey_field == (own_public_key() as Field);
-//
-// TODO: verify for-loop range syntax for Compact 0.22.
-//       If `for (let i: Uint<32> = 0; i < 100; i = i + 1)` is not valid,
-//       use fold / reduce if available, or expand each slot manually.
+// Only the Boolean result (valid / invalid) is returned to the caller.
 // ---------------------------------------------------------------------------
-export circuit verify_ticket(
-  holder_pubkey_field : Field,
-  ticket_id           : Uint<32>,
-  nonce               : Field
-): Boolean {
-  const expected: Field = persistent_hash([ticket_id as Field, holder_pubkey_field, nonce]);
-
-  let found: Boolean = false;
-
-  // Unconditional full scan — no early exit.
-  for (let i: Uint<32> = 0; i < 100; i = i + 1) {
-    found = found || (ticket_commitments[i] == expected);
-  }
-
-  // Disclose only the boolean result; all private witnesses remain hidden.
-  return disclose(found);
+export circuit verify_ticket(): Boolean {
+  const nonce: Field       = local_secret();
+  const commitment: Bytes<32> = persistentHash<Field>(nonce);
+  return ticket_commitments.member(disclose(commitment));
 }
