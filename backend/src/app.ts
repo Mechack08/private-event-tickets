@@ -1,4 +1,4 @@
-import express from "express";
+import express, { type Express } from "express";
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
 import helmet from "helmet";
@@ -40,7 +40,7 @@ function buildSessionMiddleware(): SessionMiddleware {
 }
 
 // ── App factory ───────────────────────────────────────────────────────────────
-export function createApp() {
+export function createApp(): { app: Express; sessionMiddleware: SessionMiddleware } {
   const app = express();
 
   // Trust first proxy (needed for secure cookies behind nginx/Vercel etc.)
