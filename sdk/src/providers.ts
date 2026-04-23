@@ -16,15 +16,19 @@
  *   }
  */
 
-import { setNetworkId } from "@midnight-ntwrk/midnight-js-network-id";
+import { setNetworkId, getNetworkId } from "@midnight-ntwrk/midnight-js-network-id";
 import { FetchZkConfigProvider } from "@midnight-ntwrk/midnight-js-fetch-zk-config-provider";
 import { indexerPublicDataProvider } from "@midnight-ntwrk/midnight-js-indexer-public-data-provider";
 import { levelPrivateStateProvider } from "@midnight-ntwrk/midnight-js-level-private-state-provider";
-import type { MidnightProviders } from "@midnight-ntwrk/midnight-js-types";
-import type { WalletConnectedAPI } from "@midnight-ntwrk/dapp-connector-api";
+import { createProofProvider } from "@midnight-ntwrk/midnight-js-types";
+import type { MidnightProviders, WalletProvider, MidnightProvider, UnboundTransaction } from "@midnight-ntwrk/midnight-js-types";
+import { toHex, fromHex, parseCoinPublicKeyToHex, parseEncPublicKeyToHex } from "@midnight-ntwrk/midnight-js-utils";
+import type { WalletConnectedAPI, KeyMaterialProvider } from "@midnight-ntwrk/dapp-connector-api";
+import { Transaction } from "@midnight-ntwrk/ledger-v8";
+import type { FinalizedTransaction } from "@midnight-ntwrk/ledger-v8";
 import type { NetworkConfig } from "./types.js";
 
-/** LevelDB namespace key — isolates private state per contract. */
+/** Contract namespace key used in ZK artifact URLs. */
 const CONTRACT_NAME = "event-tickets";
 
 /**
@@ -32,7 +36,7 @@ const CONTRACT_NAME = "event-tickets";
  * findDeployedContract.
  *
  * @param wallet  A connected WalletConnectedAPI obtained from the Lace DApp
- *                Connector (see hooks/useLaceWallet.ts).
+ *                Connector (see hooks/useWallet.ts).
  * @param config  Network endpoints — typically PREPROD_CONFIG from types.ts.
  */
 export async function createEventTicketProviders(
@@ -41,15 +45,12 @@ export async function createEventTicketProviders(
 ): Promise<MidnightProviders> {
   // Must be called before any provider that reads the active network ID.
   setNetworkId(config.networkId);
+  const networkId = getNetworkId();
 
   // ── ZK configuration provider ─────────────────────────────────────────
-  // Fetches compiled ZK artefacts (*.zkir, *.pk.bin, contract.wasm) that
+  // Fetches compiled ZK artefacts (*.prover, *.verifier, *.zkir) that
   // were copied to /public/contracts/event-tickets/ during the build step.
-  //
-  // TODO: FetchZkConfigProvider constructor signature may differ in
-  //       midnight-js-fetch-zk-config-provider@^4.0.4 — check the type
-  //       definitions and adjust the second `fetch` argument if required.
-  const zkConfigProvider = new FetchZkConfigProvider(
+  const zkConfigProvider = new FetchZkConfigProvider<string>(
     `${typeof window !== "undefined" ? window.location.origin : ""}/contracts/${CONTRACT_NAME}`,
     (url: URL | RequestInfo, init?: RequestInit) =>
       typeof window !== "undefined"
@@ -57,16 +58,24 @@ export async function createEventTicketProviders(
         : fetch(url, init),
   );
 
-  // ── Private state provider (LevelDB in the browser) ──────────────────
-  // All private data (ticket secrets, nonces) is stored locally here and
-  // never sent to any server.
-  //
-  // TODO: levelPrivateStateProvider may require an `openLevel` or similar
-  //       async initialisation call in some SDK versions.  Check the type
-  //       definitions and add `await` as needed.
+  // ── Pre-fetch shielded key material ───────────────────────────────────
+  // WalletProvider.getCoinPublicKey() and getEncryptionPublicKey() must be
+  // synchronous, so we resolve the Bech32m values from the wallet now and
+  // convert them to the hex-string format expected by ledger-v8.
+  const { shieldedCoinPublicKey, shieldedEncryptionPublicKey, shieldedAddress } =
+    await wallet.getShieldedAddresses();
+
+  const coinPublicKey = parseCoinPublicKeyToHex(shieldedCoinPublicKey, networkId);
+  const encPublicKey  = parseEncPublicKeyToHex(shieldedEncryptionPublicKey, networkId);
+
+  // ── Private state provider (IndexedDB in the browser) ────────────────
+  // All private data (ticket nonces) is stored locally here and never sent
+  // to any server.  The accountId scopes storage to this wallet address so
+  // different wallets using the same browser don't share state.
   const privateStateProvider = levelPrivateStateProvider({
-    privateStoragePasswordProvider: async () => CONTRACT_NAME,
-    accountId: CONTRACT_NAME,
+    privateStoragePasswordProvider: () =>
+      `midnight-${shieldedAddress.slice(0, 32)}`,
+    accountId: shieldedAddress,
   });
 
   // ── Public data provider (Midnight indexer GraphQL) ──────────────────
@@ -75,19 +84,53 @@ export async function createEventTicketProviders(
     config.indexerWsUri,
   );
 
-  // ── Wallet providers (signing + tx submission) ────────────────────────
-  // The DApp Connector API exposes these via the connected wallet object.
-  //
-  // TODO: exact method names depend on dapp-connector-api@^4.0.1 — verify
-  //       whether these are async factory methods or synchronous getters.
-  const walletProvider   = await (wallet as any).walletProvider();
-  const midnightProvider = await (wallet as any).midnightProvider();
+  // ── Proof provider (wallet-delegated ZK proving) ──────────────────────
+  // The wallet generates ZK proofs internally — no external proof server
+  // Docker container is required.  FetchZkConfigProvider is structurally
+  // compatible with the KeyMaterialProvider interface expected by the wallet.
+  const provingProvider = await wallet.getProvingProvider(
+    zkConfigProvider as unknown as KeyMaterialProvider,
+  );
+  const proofProvider = createProofProvider(provingProvider);
+
+  // ── Wallet provider (tx balancing + public key access) ────────────────
+  // Bridges the dApp Connector's string-serialized tx API to the typed
+  // UnboundTransaction / FinalizedTransaction objects the SDK uses.
+  const walletProvider: WalletProvider = {
+    balanceTx: async (tx: UnboundTransaction, _ttl?: Date): Promise<FinalizedTransaction> => {
+      // Serialize the unbound (proved, pre-binding) transaction to hex.
+      const serialized = toHex(tx.serialize());
+      // Ask the wallet to add inputs/outputs and produce a balanced tx.
+      const { tx: balancedHex } = await wallet.balanceUnsealedTransaction(serialized);
+      // Deserialize the balanced result back into a typed FinalizedTransaction.
+      return Transaction.deserialize(
+        "signature",
+        "proof",
+        "binding",
+        fromHex(balancedHex),
+      ) as unknown as FinalizedTransaction;
+    },
+    getCoinPublicKey:        () => coinPublicKey as ReturnType<WalletProvider["getCoinPublicKey"]>,
+    getEncryptionPublicKey:  () => encPublicKey  as ReturnType<WalletProvider["getEncryptionPublicKey"]>,
+  };
+
+  // ── Midnight provider (tx submission) ─────────────────────────────────
+  // Bridges the dApp Connector's submitTransaction(hex) to the SDK's
+  // submitTx(FinalizedTransaction) → TransactionId interface.
+  const midnightProvider: MidnightProvider = {
+    submitTx: async (tx: FinalizedTransaction) => {
+      const [txId] = tx.identifiers();
+      await wallet.submitTransaction(toHex(tx.serialize()));
+      return txId;
+    },
+  };
 
   return {
     zkConfigProvider,
     privateStateProvider,
     publicDataProvider,
+    proofProvider,
     walletProvider,
     midnightProvider,
-  } as unknown as MidnightProviders;
+  };
 }
