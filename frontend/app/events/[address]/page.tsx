@@ -17,6 +17,7 @@ import {
   type StoredEvent,
   type TicketRequest,
 } from "@/lib/storage";
+import { api as backendApi } from "@/lib/api";
 
 type OrganizerTab = "requests" | "attendees" | "issue";
 
@@ -138,14 +139,24 @@ function OrganizerView({
     setProcessingId(req.id);
     setIssueError(null);
     try {
-      const api = await buildApi();
-      const { txId, nonce } = await api.issueTicket();
-      const secret = api.ticketSecret(nonce);
+      const contractApi = await buildApi();
+      const { nonce } = await contractApi.issueTicket();
+      const { bigintToHex } = await import("@sdk/contract-api");
+      const secret = contractApi.ticketSecret(nonce);
       updateRequest(address, req.id, {
         status: "approved",
         secret,
         processedAt: new Date().toISOString(),
       });
+
+      // Sync to backend (non-fatal)
+      try {
+        const event = await backendApi.events.byAddress(address);
+        await backendApi.tickets.issue({ commitment: bigintToHex(nonce), eventId: event.id });
+      } catch {
+        console.warn("Backend ticket sync failed — continuing.");
+      }
+
       refresh();
     } catch (err) {
       setIssueError(err instanceof Error ? err.message : String(err));
@@ -169,9 +180,18 @@ function OrganizerView({
     setIssueError(null);
     setDirectSecret(null);
     try {
-      const api = await buildApi();
-      const { nonce } = await api.issueTicket();
-      setDirectSecret(api.ticketSecret(nonce));
+      const contractApi = await buildApi();
+      const { nonce } = await contractApi.issueTicket();
+      const { bigintToHex } = await import("@sdk/contract-api");
+      setDirectSecret(contractApi.ticketSecret(nonce));
+
+      // Sync to backend (non-fatal)
+      try {
+        const event = await backendApi.events.byAddress(address);
+        await backendApi.tickets.issue({ commitment: bigintToHex(nonce), eventId: event.id });
+      } catch {
+        console.warn("Backend ticket sync failed — continuing.");
+      }
     } catch (err) {
       setIssueError(err instanceof Error ? err.message : String(err));
     } finally {

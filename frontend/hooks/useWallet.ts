@@ -13,7 +13,7 @@
 
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 
 // We import types only — no runtime code from the Midnight SDK is imported
 // here to avoid SSR crashes.  The InitialAPI / WalletConnectedAPI interfaces
@@ -22,6 +22,7 @@ import type {
   InitialAPI,
   WalletConnectedAPI,
 } from "@midnight-ntwrk/dapp-connector-api";
+import { api, type BackendUser } from "@/lib/api";
 
 export type WalletStatus =
   | "disconnected"
@@ -43,6 +44,8 @@ export interface WalletState {
   error: string | null;
   /** All detected Midnight wallets in window.midnight */
   availableWallets: AvailableWallet[];
+  /** Backend session user — populated after a successful auth/connect call. */
+  backendUser: BackendUser | null;
   connect: (walletKey?: string) => Promise<void>;
   disconnect: () => void;
 }
@@ -60,9 +63,15 @@ export function useWallet(): WalletState {
   const [shieldedPubkey, setShieldedPubkey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [availableWallets, setAvailableWallets] = useState<AvailableWallet[]>([]);
+  const [backendUser, setBackendUser] = useState<BackendUser | null>(null);
 
   // Keep a stable ref to the connected wallet for teardown
   const walletRef = useRef<WalletConnectedAPI | null>(null);
+
+  // Restore backend session on mount (page refresh keeps user logged in)
+  useEffect(() => {
+    api.auth.me().then(setBackendUser).catch(() => {/* no session — fine */});
+  }, []);
 
   const connect = useCallback(async (walletKey?: string) => {
     setStatus("connecting");
@@ -108,12 +117,24 @@ export function useWallet(): WalletState {
       // ── Fetch shielded address ────────────────────────────────────────
       // Use shieldedAddress for display — it matches what the wallet shows
       // the user (Bech32m address), not the raw coin public key.
+      let resolvedAddress: string | null = null;
       try {
         const addresses = await connected.getShieldedAddresses();
-        setShieldedPubkey(addresses.shieldedAddress ?? null);
+        resolvedAddress = addresses.shieldedAddress ?? null;
+        setShieldedPubkey(resolvedAddress);
       } catch {
         // Non-fatal: address is optional for some flows.
         console.warn("Could not fetch shielded address from wallet.");
+      }
+
+      // ── Register / restore backend session ───────────────────────────
+      if (resolvedAddress) {
+        try {
+          const user = await api.auth.connect(resolvedAddress);
+          setBackendUser(user);
+        } catch {
+          console.warn("Backend auth failed — continuing without session.");
+        }
       }
 
       setStatus("connected");
@@ -125,12 +146,14 @@ export function useWallet(): WalletState {
   }, []);
 
   const disconnect = useCallback(() => {
+    api.auth.disconnect().catch(() => {/* fire-and-forget */});
     walletRef.current = null;
     setWallet(null);
     setShieldedPubkey(null);
+    setBackendUser(null);
     setStatus("disconnected");
     setError(null);
   }, []);
 
-  return { status, wallet, shieldedPubkey, error, availableWallets, connect, disconnect };
+  return { status, wallet, shieldedPubkey, error, availableWallets, backendUser, connect, disconnect };
 }

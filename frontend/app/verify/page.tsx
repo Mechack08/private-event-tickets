@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Nav } from "@/components/Nav";
 import { WalletConnect } from "@/components/WalletConnect";
 import { useWallet } from "@/contexts/WalletContext";
+import { api as backendApi } from "@/lib/api";
 
 type Phase = "idle" | "parsing" | "proving" | "done" | "error";
 
@@ -60,12 +61,23 @@ export default function VerifyPage() {
       ]);
 
       const providers = await createEventTicketProviders(wallet, PREPROD_CONFIG);
-      const api = await EventTicketAPI.join(providers, secret.contractAddress);
-      const { verified: ok, txId: id } = await api.verifyTicket(
+      const contractApi = await EventTicketAPI.join(providers, secret.contractAddress);
+      const { verified: ok, txId: id } = await contractApi.verifyTicket(
         hexToBigint(secret.nonce),
       );
       setVerified(ok);
       setTxId(id);
+
+      // Record verification in backend (non-fatal)
+      if (ok) {
+        try {
+          const event = await backendApi.events.byAddress(secret.contractAddress);
+          await backendApi.tickets.verify({ commitment: secret.nonce, eventId: event.id });
+        } catch {
+          console.warn("Backend verify sync failed — continuing.");
+        }
+      }
+
       setPhase("done");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

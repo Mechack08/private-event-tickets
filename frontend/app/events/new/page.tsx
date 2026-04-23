@@ -7,6 +7,7 @@ import { Nav } from "@/components/Nav";
 import { WalletConnect } from "@/components/WalletConnect";
 import { useWallet } from "@/contexts/WalletContext";
 import { saveEvent } from "@/lib/storage";
+import { api as backendApi } from "@/lib/api";
 
 export default function NewEventPage() {
   const router = useRouter();
@@ -45,6 +46,17 @@ export default function NewEventPage() {
         txId,
         createdAt: new Date().toISOString(),
       });
+
+      // Persist to backend (non-fatal if offline).
+      try {
+        await backendApi.events.create({
+          contractAddress: api.contractAddress,
+          name: eventName.trim(),
+          maxCapacity: parseInt(totalTickets, 10),
+        });
+      } catch {
+        console.warn("Backend event sync failed — continuing.");
+      }
 
       router.push(`/events/${encodeURIComponent(api.contractAddress)}`);
     } catch (err) {
