@@ -1,19 +1,11 @@
 import { Router } from "express";
-import { z } from "zod";
 import { upsertUser, findUserById } from "../services/userService.js";
 import { authLimiter } from "../middleware/rateLimiter.js";
 import { createError } from "../middleware/errorHandler.js";
 import { requireAuth } from "../middleware/requireAuth.js";
+import { shieldedAddressSchema } from "../validators/shieldedAddress.js";
 
 const router = Router();
-
-// Bech32m shielded addresses start with the network prefix (e.g. "mn_shield_")
-// We do a generous pattern check to prevent junk data hitting the DB.
-const shieldedAddressSchema = z
-  .string()
-  .min(40)
-  .max(200)
-  .regex(/^[a-z0-9_]+$/, "Invalid shielded address format");
 
 /**
  * POST /auth/connect
@@ -43,7 +35,7 @@ router.post("/connect", authLimiter, async (req, res, next) => {
       req.session.save((saveErr) => {
         if (saveErr) return next(saveErr);
         res.status(200).json({
-          id: user.id,
+          userId: user.id,
           shieldedAddress: user.shieldedAddress,
           createdAt: user.createdAt,
         });
@@ -68,7 +60,7 @@ router.get("/me", requireAuth, async (req, res, next) => {
       throw createError("User not found.", 404);
     }
     res.json({
-      id: user.id,
+      userId: user.id,
       shieldedAddress: user.shieldedAddress,
       createdAt: user.createdAt,
     });

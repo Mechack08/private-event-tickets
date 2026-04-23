@@ -68,9 +68,20 @@ export function useWallet(): WalletState {
   // Keep a stable ref to the connected wallet for teardown
   const walletRef = useRef<WalletConnectedAPI | null>(null);
 
-  // Restore backend session on mount (page refresh keeps user logged in)
+  // Restore backend session on mount (page refresh keeps user logged in).
+  // We only restore UI state (status + shieldedPubkey) from the session —
+  // we do NOT call wallet.connect() here because the DApp Connector API has
+  // no silent-reconnect path and calling connect() always shows a popup.
+  // The wallet object stays null until the user explicitly clicks "Connect
+  // Wallet"; on-chain operations will prompt for reconnect at that point.
   useEffect(() => {
-    api.auth.me().then(setBackendUser).catch(() => {/* no session — fine */});
+    api.auth.me()
+      .then((user) => {
+        setBackendUser(user);
+        setShieldedPubkey(user.shieldedAddress);
+        setStatus("connected");
+      })
+      .catch(() => { /* no session — fine */ });
   }, []);
 
   const connect = useCallback(async (walletKey?: string) => {
