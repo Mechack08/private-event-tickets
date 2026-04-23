@@ -184,14 +184,8 @@ pnpm proof-server:start       # Docker: midnightntwrk/proof-server on :6300
 
 ### 6. Start everything
 
-In separate terminals:
-
 ```bash
-# Terminal 1 — backend API
-pnpm backend:dev              # http://localhost:4000
-
-# Terminal 2 — frontend
-pnpm dev                      # http://localhost:3000
+pnpm dev                      # starts backend (http://localhost:4000) and frontend (http://localhost:3000) in parallel
 ```
 
 Health check:

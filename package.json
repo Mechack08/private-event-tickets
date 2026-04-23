@@ -39,7 +39,7 @@
 
     "// ── FRONTEND ──────────────────────────────────────────────────────": "",
 
-    "dev": "pnpm --filter @private-event-tickets/frontend dev",
+    "dev": "pnpm --parallel --filter @private-event-tickets/frontend --filter @private-event-tickets/backend dev",
     "build:frontend": "pnpm --filter @private-event-tickets/frontend build",
     "start": "pnpm --filter @private-event-tickets/frontend start",
     "typecheck:frontend": "pnpm --filter @private-event-tickets/frontend typecheck",
@@ -64,6 +64,7 @@
     "// ── BACKEND ───────────────────────────────────────────────────────────": "",
 
     "backend:dev": "pnpm --filter @private-event-tickets/backend dev",
+    "backend:test": "pnpm --filter @private-event-tickets/backend test",
     "backend:build": "pnpm --filter @private-event-tickets/backend build",
     "backend:start": "pnpm --filter @private-event-tickets/backend start",
     "backend:typecheck": "pnpm --filter @private-event-tickets/backend typecheck",
