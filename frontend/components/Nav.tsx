@@ -14,7 +14,7 @@ export function Nav() {
   const pathname = usePathname();
 
   return (
-    <header className="fixed top-0 inset-x-0 z-50 border-b border-white/8 bg-[#0a0a0a]/90 backdrop-blur-md">
+    <header className="fixed top-0 inset-x-0 z-50 border-b border-white/8 bg-[#080808]/90 backdrop-blur-md">
       <div className="mx-auto max-w-5xl px-5 h-14 flex items-center gap-6">
         <Link
           href="/"
@@ -30,7 +30,7 @@ export function Nav() {
               <Link
                 key={href}
                 href={href}
-                className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
+                className={`px-3 py-1.5 text-sm transition-colors ${
                   active
                     ? "bg-white text-black font-medium"
                     : "text-zinc-400 hover:text-white hover:bg-white/8"
