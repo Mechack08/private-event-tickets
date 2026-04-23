@@ -59,7 +59,23 @@
     "build": "pnpm run sdk:build && pnpm run build:frontend",
     "build:all": "pnpm run contract:setup && pnpm run sdk:build && pnpm run build:frontend",
 
-    "dev:full": "pnpm run proof-server:start && pnpm run dev"
+    "dev:full": "pnpm run proof-server:start && pnpm run dev",
+
+    "// ── BACKEND ───────────────────────────────────────────────────────────": "",
+
+    "backend:dev": "pnpm --filter @private-event-tickets/backend dev",
+    "backend:build": "pnpm --filter @private-event-tickets/backend build",
+    "backend:start": "pnpm --filter @private-event-tickets/backend start",
+    "backend:typecheck": "pnpm --filter @private-event-tickets/backend typecheck",
+    "backend:db:generate": "pnpm --filter @private-event-tickets/backend db:generate",
+    "backend:db:migrate": "pnpm --filter @private-event-tickets/backend db:migrate",
+    "backend:db:studio": "pnpm --filter @private-event-tickets/backend db:studio",
+
+    "// ── DATABASE (Docker) ─────────────────────────────────────────────────": "",
+
+    "db:up": "docker compose up -d postgres",
+    "db:down": "docker compose down",
+    "db:ui": "docker compose --profile tools up -d pgadmin"
 
   }
 }

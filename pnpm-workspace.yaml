@@ -2,3 +2,4 @@ packages:
   - "contract"
   - "sdk"
   - "frontend"
+  - "backend"
