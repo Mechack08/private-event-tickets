@@ -71,22 +71,19 @@ export default function MyTicketsPage() {
   return (
     <>
       <Nav />
-      <main className="min-h-dvh bg-[#0a0a0a] pt-14">
+      <main className="min-h-dvh bg-[#080808] pt-14">
         <div className="mx-auto max-w-2xl px-5 pt-12 pb-24">
-          <div className="flex items-center justify-between mb-10">
+          <div className="flex items-start justify-between mb-8 gap-4">
             <div>
-              <h1 className="text-2xl font-bold text-white tracking-tight">
-                My Tickets
-              </h1>
-              <p className="text-sm text-zinc-500 mt-1">
-                Your saved ticket secrets. Keep them private.
-              </p>
+              <p className="text-[11px] text-zinc-500 uppercase tracking-widest font-medium mb-1.5">Attendee</p>
+              <h1 className="text-2xl font-bold text-white tracking-tight">My Tickets</h1>
+              <p className="text-sm text-zinc-500 mt-1">Your saved ticket secrets. Keep them private.</p>
             </div>
             <button
               onClick={() => setShowImport((v) => !v)}
-              className="text-xs font-medium bg-white text-black px-3 py-1.5 rounded-lg hover:bg-zinc-100 transition-colors"
+              className="shrink-0 text-xs font-semibold bg-white text-black px-3 py-2 hover:bg-zinc-100 transition-colors"
             >
-              {showImport ? "Cancel" : "+ Import"}
+              {showImport ? "Cancel" : "Import"}
             </button>
           </div>
 
@@ -94,9 +91,9 @@ export default function MyTicketsPage() {
           {showImport && (
             <form
               onSubmit={handleImport}
-              className="mb-8 rounded-xl border border-white/10 bg-white/3 px-5 py-5 space-y-4"
+              className="mb-8 border border-white/8 bg-white/[0.02] px-5 py-5 space-y-4"
             >
-              <p className="text-sm font-medium text-white">Import ticket</p>
+              <p className="text-sm font-semibold text-white">Import ticket secret</p>
               <div>
                 <label
                   htmlFor="importName"
@@ -111,7 +108,7 @@ export default function MyTicketsPage() {
                   placeholder="e.g. DevCon 2026"
                   value={importEventName}
                   onChange={(e) => setImportEventName(e.target.value)}
-                  className="w-full bg-white/4 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-white/30 transition-colors"
+                  className="w-full bg-white/[0.03] border border-white/8 px-4 py-3 text-sm text-white placeholder-zinc-700 focus:outline-none focus:border-white/30 transition-colors"
                 />
               </div>
               <div>
@@ -128,7 +125,7 @@ export default function MyTicketsPage() {
                   value={importJson}
                   onChange={(e) => setImportJson(e.target.value)}
                   required
-                  className="w-full bg-white/4 border border-white/10 rounded-xl px-4 py-3 text-xs text-white font-mono placeholder-zinc-600 focus:outline-none focus:border-white/30 transition-colors resize-none"
+                  className="w-full bg-white/[0.03] border border-white/8 px-4 py-3 text-xs text-white font-mono placeholder-zinc-700 focus:outline-none focus:border-white/30 transition-colors resize-none"
                 />
               </div>
               {importError && (
@@ -136,7 +133,7 @@ export default function MyTicketsPage() {
               )}
               <button
                 type="submit"
-                className="w-full bg-white text-black text-sm font-medium py-3 rounded-xl hover:bg-zinc-100 transition-colors"
+                className="w-full bg-white text-black text-sm font-semibold py-3 hover:bg-zinc-100 transition-colors"
               >
                 Save Ticket
               </button>
@@ -145,14 +142,14 @@ export default function MyTicketsPage() {
 
           {/* Tickets list */}
           {tickets.length === 0 ? (
-            <div className="text-center py-20 border border-white/6 rounded-2xl">
+            <div className="text-center py-20 border border-white/6 bg-white/[0.02]">
               <p className="text-zinc-600 text-sm">No tickets saved yet.</p>
               <p className="text-zinc-700 text-xs mt-2">
                 Request a ticket on an event page, or import a secret above.
               </p>
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-2">
               {tickets.map((ticket) => (
                 <TicketCard
                   key={ticket.id}
@@ -227,14 +224,14 @@ function TicketCard({
   }
 
   return (
-    <div className="rounded-xl border border-white/10 bg-white/3">
+    <div className="border border-white/8 bg-white/[0.02]">
       {/* Header row */}
       <button
         onClick={() => setExpanded((v) => !v)}
         className="w-full flex items-center justify-between gap-4 px-5 py-4 text-left"
       >
         <div className="min-w-0">
-          <p className="text-sm font-medium text-white truncate">
+          <p className="text-sm font-semibold text-white truncate">
             {ticket.eventName}
           </p>
           <p className="text-xs text-zinc-600 font-mono mt-0.5 truncate">
@@ -244,10 +241,10 @@ function TicketCard({
         <div className="flex items-center gap-2 shrink-0">
           {verifyResult !== null && (
             <span
-              className={`text-xs border px-2 py-0.5 rounded-full ${
+              className={`text-xs border px-2 py-0.5 ${
                 verifyResult
-                  ? "text-emerald-400 border-emerald-500/20"
-                  : "text-red-400 border-red-500/20"
+                  ? "text-emerald-400 border-emerald-500/20 bg-emerald-500/5"
+                  : "text-red-400 border-red-500/20 bg-red-500/5"
               }`}
             >
               {verifyResult ? "Valid" : "Invalid"}
@@ -273,7 +270,7 @@ function TicketCard({
                 {copied ? "Copied!" : "Copy"}
               </button>
             </div>
-            <pre className="text-xs font-mono text-zinc-500 whitespace-pre-wrap break-all">
+            <pre className="text-xs font-mono text-zinc-500 whitespace-pre-wrap break-all bg-white/[0.02] border border-white/6 px-3 py-3">
               {JSON.stringify(ticket.secret, null, 2)}
             </pre>
           </div>
@@ -284,20 +281,20 @@ function TicketCard({
             <button
               onClick={verify}
               disabled={verifying || !walletReady}
-              className="w-full bg-white text-black text-xs font-medium py-2.5 rounded-xl hover:bg-zinc-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              className="w-full bg-white text-black text-xs font-semibold py-2.5 hover:bg-zinc-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
             >
               {verifying ? "Generating ZK proof…" : "Verify Ticket"}
             </button>
             {verifyResult !== null && (
               <div
-                className={`rounded-xl border px-4 py-3 ${
+                className={`border px-4 py-3 ${
                   verifyResult
-                    ? "border-emerald-500/20 bg-emerald-500/6"
-                    : "border-red-500/20 bg-red-500/6"
+                    ? "border-emerald-500/20 bg-emerald-500/5"
+                    : "border-red-500/20 bg-red-500/5"
                 }`}
               >
                 <p
-                  className={`text-sm font-medium ${
+                  className={`text-sm font-semibold ${
                     verifyResult ? "text-emerald-400" : "text-red-400"
                   }`}
                 >

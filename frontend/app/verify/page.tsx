@@ -76,9 +76,10 @@ export default function VerifyPage() {
   return (
     <>
       <Nav />
-      <main className="min-h-dvh bg-[#0a0a0a] pt-14">
+      <main className="min-h-dvh bg-[#080808] pt-14">
         <div className="mx-auto max-w-lg px-5 pt-12 pb-24">
           <div className="mb-8">
+            <p className="text-[11px] text-zinc-500 uppercase tracking-widest font-medium mb-2">Attendee · ZK</p>
             <h1 className="text-2xl font-bold text-white tracking-tight mb-2">
               Verify Ticket
             </h1>
@@ -106,30 +107,28 @@ export default function VerifyPage() {
                 onChange={(e) => setSecretJson(e.target.value)}
                 required
                 disabled={loading}
-                className="w-full bg-white/4 border border-white/10 rounded-xl px-4 py-3 text-xs text-white font-mono placeholder-zinc-600 focus:outline-none focus:border-white/30 disabled:opacity-40 transition-colors resize-none"
+                className="w-full bg-white/[0.03] border border-white/8 px-4 py-3 text-xs text-white font-mono placeholder-zinc-700 focus:outline-none focus:border-white/30 disabled:opacity-40 transition-colors resize-none"
               />
             </div>
 
             <button
               type="submit"
               disabled={loading || !isWalletReady}
-              className="w-full bg-white text-black text-sm font-medium py-3 rounded-xl hover:bg-zinc-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              className="w-full bg-white text-black text-sm font-semibold py-3 hover:bg-zinc-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
             >
               {loading ? "Generating proof…" : "Verify Ticket"}
             </button>
 
             {!isWalletReady && (
               <p className="text-xs text-zinc-600 text-center">
-                Connect the wallet that received this ticket
+                Connect the wallet that received this ticket to continue
               </p>
             )}
           </form>
 
           {phase === "proving" && (
-            <div className="mt-6 rounded-xl border border-white/8 bg-white/3 px-4 py-4 space-y-1">
-              <p className="text-sm text-zinc-300">
-                Generating zero-knowledge proof…
-              </p>
+            <div className="mt-6 border border-white/8 bg-white/[0.02] px-4 py-4 space-y-1">
+              <p className="text-sm text-zinc-300">Generating zero-knowledge proof…</p>
               <p className="text-xs text-zinc-600">
                 CPU-intensive — may take 2–4 minutes. Private data never leaves
                 your browser.
@@ -139,10 +138,10 @@ export default function VerifyPage() {
 
           {phase === "done" && verified !== null && (
             <div
-              className={`mt-6 rounded-xl border px-4 py-5 space-y-3 ${
+              className={`mt-6 border px-4 py-5 space-y-3 ${
                 verified
-                  ? "border-emerald-500/20 bg-emerald-500/6"
-                  : "border-red-500/20 bg-red-500/6"
+                  ? "border-emerald-500/20 bg-emerald-500/5"
+                  : "border-red-500/20 bg-red-500/5"
               }`}
             >
               <p
@@ -165,7 +164,7 @@ export default function VerifyPage() {
                   </p>
                 </div>
               )}
-              <div className="rounded-lg border border-white/6 bg-white/3 px-3 py-3">
+              <div className="border border-white/6 bg-white/[0.02] px-3 py-3">
                 <p className="text-xs text-zinc-500">
                   The ZK proof discloses only whether a valid commitment exists
                   — not your identity, nonce, or which commitment matched.
@@ -175,8 +174,8 @@ export default function VerifyPage() {
           )}
 
           {(phase === "error" || error) && (
-            <div className="mt-6 rounded-xl border border-red-500/20 bg-red-500/6 px-4 py-4">
-              <p className="text-sm font-medium text-red-400 mb-1">Error</p>
+            <div className="mt-6 border border-red-500/20 bg-red-500/5 px-4 py-4">
+              <p className="text-sm font-semibold text-red-400 mb-1">Error</p>
               <p className="text-xs text-red-300/70 break-all">{error}</p>
             </div>
           )}

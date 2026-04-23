@@ -4,10 +4,14 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Nav } from "@/components/Nav";
+import { WalletConnect } from "@/components/WalletConnect";
+import { useWallet } from "@/contexts/WalletContext";
 import { getMyEvents, type StoredEvent } from "@/lib/storage";
 
 export default function EventsPage() {
   const router = useRouter();
+  const { status } = useWallet();
+  const connected = status === "connected";
   const [events, setEvents] = useState<StoredEvent[]>([]);
   const [lookup, setLookup] = useState("");
   const [hydrated, setHydrated] = useState(false);
@@ -26,55 +30,76 @@ export default function EventsPage() {
   return (
     <>
       <Nav />
-      <main className="min-h-dvh bg-[#0a0a0a] pt-14">
+      <main className="min-h-dvh bg-[#080808] pt-14">
         <div className="mx-auto max-w-2xl px-5 pt-12 pb-24">
-          <div className="flex items-center justify-between mb-10">
+          {/* Page header */}
+          <div className="flex items-start justify-between mb-8 gap-4">
             <div>
-              <h1 className="text-2xl font-bold text-white tracking-tight">
-                Events
-              </h1>
-              <p className="text-sm text-zinc-500 mt-1">
-                Your events and events you&apos;ve visited.
-              </p>
+              <p className="text-[11px] text-zinc-500 uppercase tracking-widest font-medium mb-1.5">Platform</p>
+              <h1 className="text-2xl font-bold text-white tracking-tight">Events</h1>
+              <p className="text-sm text-zinc-500 mt-1">Your deployed events and events you&apos;ve attended.</p>
             </div>
-            <Link
-              href="/events/new"
-              className="text-xs font-medium bg-white text-black px-3 py-1.5 rounded-lg hover:bg-zinc-100 transition-colors"
-            >
-              + New Event
-            </Link>
+            {connected ? (
+              <Link
+                href="/events/new"
+                className="shrink-0 text-xs font-semibold bg-white hover:bg-zinc-100 text-black px-3 py-2 transition-colors flex items-center gap-1.5"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                </svg>
+                New Event
+              </Link>
+            ) : (
+              <div className="shrink-0 text-xs text-zinc-600 border border-white/6 px-3 py-2 flex items-center gap-1.5 opacity-50 cursor-not-allowed select-none">
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z" />
+                </svg>
+                New Event
+              </div>
+            )}
           </div>
+
+          {/* Wallet gate banner */}
+          {!connected && (
+            <div className="mb-6">
+              <WalletConnect />
+            </div>
+          )}
 
           {/* Lookup by contract address */}
           <form onSubmit={handleLookup} className="flex gap-2 mb-8">
             <input
               type="text"
-              placeholder="View event by contract address…"
+              placeholder="Look up event by contract address…"
               value={lookup}
               onChange={(e) => setLookup(e.target.value)}
-              className="flex-1 bg-white/4 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white font-mono placeholder-zinc-600 focus:outline-none focus:border-white/30 transition-colors"
+              className="flex-1 bg-white/[0.03] border border-white/8 px-4 py-2.5 text-sm text-white font-mono placeholder-zinc-700 focus:outline-none focus:border-white/30 transition-colors"
             />
             <button
               type="submit"
               disabled={!lookup.trim()}
-              className="text-sm font-medium bg-white text-black px-4 py-2.5 rounded-xl hover:bg-zinc-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              className="text-sm font-medium bg-white text-black px-4 py-2.5 hover:bg-zinc-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
             >
-              Go
+              Go →
             </button>
           </form>
 
           {!hydrated ? null : events.length === 0 ? (
-            <div className="text-center py-20 border border-white/6 rounded-2xl">
-              <p className="text-zinc-600 text-sm">No events yet.</p>
-              <Link
-                href="/events/new"
-                className="inline-block mt-4 text-xs text-zinc-400 hover:text-white underline underline-offset-4 transition-colors"
-              >
-                Create your first event →
-              </Link>
+            <div className="text-center py-20 border border-white/6 bg-white/[0.02]">
+              <p className="text-zinc-600 text-sm">No events saved locally.</p>
+              {connected ? (
+                <Link
+                  href="/events/new"
+                  className="inline-block mt-4 text-xs text-zinc-500 hover:text-zinc-400 transition-colors"
+                >
+                  Create your first event →
+                </Link>
+              ) : (
+                <p className="mt-3 text-xs text-zinc-700">Connect a wallet to create events.</p>
+              )}
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-2">
               {events.map((event) => (
                 <EventCard key={event.contractAddress} event={event} />
               ))}
@@ -90,18 +115,16 @@ function EventCard({ event }: { event: StoredEvent }) {
   return (
     <Link
       href={`/events/${encodeURIComponent(event.contractAddress)}`}
-      className="flex items-center justify-between gap-4 rounded-xl border border-white/10 bg-white/3 hover:bg-white/5 px-5 py-4 transition-colors group"
+      className="flex items-center justify-between gap-4 border border-white/8 bg-white/[0.02] hover:bg-white/[0.04] px-5 py-4 transition-colors group"
     >
       <div className="min-w-0">
-        <p className="text-sm font-medium text-white truncate">{event.eventName}</p>
+        <p className="text-sm font-semibold text-white truncate">{event.eventName}</p>
         <p className="text-xs text-zinc-600 font-mono mt-1 truncate">
           {event.contractAddress}
         </p>
       </div>
       <div className="text-right shrink-0">
-        <p className="text-xs text-zinc-400 tabular-nums">
-          {event.totalTickets} tickets
-        </p>
+        <p className="text-xs text-zinc-400 tabular-nums">{event.totalTickets} cap</p>
         <p className="text-xs text-zinc-600 mt-0.5">
           {new Date(event.createdAt).toLocaleDateString()}
         </p>
