@@ -11,6 +11,8 @@ export interface StoredEvent {
   totalTickets: number;
   txId: string;
   createdAt: string;
+  /** Hex-encoded organizer caller_secret — required to manage the event. */
+  callerSecretHex: string;
 }
 
 export interface TicketRequest {
@@ -60,6 +62,7 @@ const K = {
   MY_TICKETS: "mt_my_tickets",
   requests: (addr: string) => `mt_req_${addr}`,
   myReqId: (addr: string) => `mt_my_req_${addr}`,
+  callerSecret: (addr: string) => `mt_secret_${addr}`,
 } as const;
 
 // ─── Events ───────────────────────────────────────────────────────────────────
@@ -78,6 +81,18 @@ export function saveEvent(event: StoredEvent): void {
 
 export function getEvent(contractAddress: string): StoredEvent | undefined {
   return getMyEvents().find((e) => e.contractAddress === contractAddress);
+}
+
+/**
+ * Store the organizer caller_secret separately under its own key so it is
+ * never accidentally exposed through the shared event list.
+ */
+export function saveCallerSecret(contractAddress: string, secretHex: string): void {
+  write(K.callerSecret(contractAddress), secretHex);
+}
+
+export function getCallerSecret(contractAddress: string): string | null {
+  return read<string | null>(K.callerSecret(contractAddress), null);
 }
 
 // ─── Ticket requests ─────────────────────────────────────────────────────────
