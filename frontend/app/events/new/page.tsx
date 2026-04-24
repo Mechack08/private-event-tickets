@@ -1,53 +1,59 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQueryClient } from "@tanstack/react-query";
 import { Nav } from "@/components/Nav";
 import { WalletConnect } from "@/components/WalletConnect";
+import { EventPlaceholder } from "@/components/EventPlaceholder";
 import { useWallet } from "@/contexts/WalletContext";
 import { saveEvent, saveCallerSecret } from "@/lib/storage";
 import { api as backendApi } from "@/lib/api";
 
-
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface FormState {
-  eventName: string;
+  eventName:    string;
   totalTickets: string;
-  description: string;
-  location: string;
-  eventDate: string;
-  eventTime: string;
+  description:  string;
+  location:     string;
+  eventDate:    string;
+  eventTime:    string;
+  imageUrl:     string;
 }
 
-type StepStatus = "idle" | "active" | "done" | "error";
+type ProgressStatus = "idle" | "active" | "done" | "error";
 
-interface Step {
-  id: string;
-  label: string;
+interface ProgressStep {
+  id:      string;
+  label:   string;
   detail?: string;
-  status: StepStatus;
+  status:  ProgressStatus;
 }
 
 interface DeploySuccess {
   contractAddress: string;
-  callerSecretHex: string;
-  eventName: string;
+  eventName:       string;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const INITIAL_STEPS: Step[] = [
+const WIZARD_STEPS = [
+  { label: "Core",    sub: "on-chain"  },
+  { label: "Details", sub: "off-chain" },
+  { label: "Review",  sub: "deploy"    },
+] as const;
+
+const INITIAL_PROGRESS: ProgressStep[] = [
   { id: "deploy",  label: "Deploying contract",          status: "active" },
   { id: "circuit", label: "Initialising on-chain state", status: "idle"   },
   { id: "key",     label: "Saving organizer key",        status: "idle"   },
-  { id: "backend", label: "Registering event metadata",  status: "idle"   },
+  { id: "backend", label: "Registering metadata",        status: "idle"   },
 ];
 
-// ─── Sub-components ───────────────────────────────────────────────────────────
+// ─── Shared helpers ───────────────────────────────────────────────────────────
 
 function Spinner({ size = 14 }: { size?: number }) {
   return (
@@ -58,53 +64,64 @@ function Spinner({ size = 14 }: { size?: number }) {
   );
 }
 
-function CheckIcon({ className }: { className?: string }) {
+function CheckSm() {
   return (
-    <svg className={className} fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+    <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
     </svg>
   );
 }
 
-function StepRow({ step }: { step: Step }) {
-  return (
-    <motion.div layout className="flex items-start gap-3">
-      <div className="mt-0.5 w-5 h-5 flex items-center justify-center shrink-0">
-        {step.status === "done"   && <CheckIcon className="w-4 h-4 text-emerald-400" />}
-        {step.status === "active" && <Spinner size={14} />}
-        {step.status === "error"  && (
-          <svg className="w-4 h-4 text-red-400" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        )}
-        {step.status === "idle" && <div className="w-1.5 h-1.5 rounded-full bg-zinc-700" />}
-      </div>
+const inputCls =
+  "w-full bg-white/[0.03] border border-white/8 px-4 py-3 text-sm text-white placeholder-zinc-700 focus:outline-none focus:border-white/25 disabled:opacity-40 transition-colors rounded-none";
 
-      <div className="flex-1 min-w-0 pb-0.5">
-        <p className={`text-sm leading-none ${
-          step.status === "active" ? "text-white"
-          : step.status === "done"   ? "text-zinc-400"
-          : step.status === "error"  ? "text-red-400"
-          : "text-zinc-600"
-        }`}>
-          {step.label}
-        </p>
-        {step.detail && step.status === "done" && (
-          <p className="text-[11px] font-mono text-zinc-600 mt-1 truncate">{step.detail}</p>
-        )}
-      </div>
-    </motion.div>
+// ─── Stepper ──────────────────────────────────────────────────────────────────
+
+function Stepper({ current }: { current: number }) {
+  return (
+    <div className="flex items-center mb-10">
+      {WIZARD_STEPS.map((s, i) => (
+        <div key={i} className="contents">
+          <div className="flex flex-col items-center gap-1 shrink-0">
+            <div
+              className={[
+                "w-7 h-7 flex items-center justify-center text-[11px] font-bold border transition-all duration-200",
+                i === current
+                  ? "bg-white text-black border-white"
+                  : i < current
+                  ? "bg-white/[0.07] text-zinc-400 border-white/20"
+                  : "bg-transparent text-zinc-700 border-white/8",
+              ].join(" ")}
+            >
+              {i < current
+                ? <CheckSm />
+                : <span className="font-mono tabular-nums">{String(i + 1).padStart(2, "0")}</span>
+              }
+            </div>
+            <div className="text-center">
+              <p className={`text-[9px] font-semibold uppercase tracking-widest ${i === current ? "text-zinc-300" : "text-zinc-700"}`}>
+                {s.label}
+              </p>
+              <p className="text-[8px] font-mono text-zinc-800">{s.sub}</p>
+            </div>
+          </div>
+          {i < WIZARD_STEPS.length - 1 && (
+            <div
+              className={`flex-1 h-px mx-4 mb-5 transition-colors duration-300 ${i < current ? "bg-white/20" : "bg-white/6"}`}
+            />
+          )}
+        </div>
+      ))}
+    </div>
   );
 }
 
+// ─── Field wrapper ────────────────────────────────────────────────────────────
+
 function Field({
-  id, label, badge, hint, children,
+  id, label, badge, hint, optional, children,
 }: {
-  id: string;
-  label: string;
-  badge?: string;
-  hint?: string;
-  children: React.ReactNode;
+  id: string; label: string; badge?: string; hint?: string; optional?: boolean; children: React.ReactNode;
 }) {
   return (
     <div>
@@ -115,6 +132,9 @@ function Field({
             {badge}
           </span>
         )}
+        {optional && (
+          <span className="text-[10px] text-zinc-700 italic">optional</span>
+        )}
       </div>
       {children}
       {hint && <p className="text-[10px] text-zinc-700 mt-1.5 leading-relaxed">{hint}</p>}
@@ -122,139 +142,330 @@ function Field({
   );
 }
 
-function SectionDivider({ label, sub }: { label: string; sub: string }) {
+// ─── Deploy progress row ──────────────────────────────────────────────────────
+
+function ProgressRow({ step }: { step: ProgressStep }) {
   return (
-    <div className="flex items-center gap-3">
-      <div className="w-0.5 h-4 bg-white/15 rounded-full" />
-      <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-widest">{label}</p>
-      <div className="flex-1 h-px bg-white/6" />
-      <span className="text-[10px] font-mono text-zinc-700">{sub}</span>
+    <motion.div layout className="flex items-start gap-3">
+      <div className="mt-0.5 w-5 h-5 flex items-center justify-center shrink-0">
+        {step.status === "done"   && <CheckSm />}
+        {step.status === "active" && <Spinner size={13} />}
+        {step.status === "error"  && (
+          <svg className="w-3.5 h-3.5 text-red-400" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        )}
+        {step.status === "idle" && <div className="w-1.5 h-1.5 rounded-full bg-zinc-700 mx-auto" />}
+      </div>
+      <div className="flex-1 min-w-0 pb-0.5">
+        <p className={`text-sm leading-none ${
+          step.status === "active" ? "text-white"
+          : step.status === "done"  ? "text-zinc-500"
+          : step.status === "error" ? "text-red-400"
+          : "text-zinc-700"
+        }`}>
+          {step.label}
+        </p>
+        {step.detail && step.status === "done" && (
+          <p className="text-[11px] font-mono text-zinc-700 mt-1 truncate">{step.detail}</p>
+        )}
+      </div>
+    </motion.div>
+  );
+}
+
+// ─── Step 0 — Core (on-chain) ─────────────────────────────────────────────────
+
+function Step0({
+  form, onChange, onNext,
+}: {
+  form: FormState;
+  onChange: (key: keyof FormState) => (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onNext: () => void;
+}) {
+  const canContinue = form.eventName.trim().length > 0 && parseInt(form.totalTickets) >= 1;
+
+  return (
+    <div className="space-y-6">
+      <div className="mb-2">
+        <p className="text-[10px] font-semibold text-zinc-600 uppercase tracking-widest mb-2">Step 1 of 3</p>
+        <h2 className="text-lg font-bold text-white mb-1">What are you creating?</h2>
+        <p className="text-sm text-zinc-600 leading-relaxed">
+          These two values are committed permanently to the Midnight ledger and cannot be changed after deploy.
+        </p>
+      </div>
+
+      <Field id="eventName" label="Event name" badge="Bytes<32>"
+        hint="Encoded as 32-byte UTF-8 on-chain. Limited to 32 characters.">
+        <input id="eventName" type="text" placeholder="e.g. ZK Summit 2026"
+          value={form.eventName} onChange={onChange("eventName")} maxLength={32} required className={inputCls} />
+      </Field>
+
+      <Field id="totalTickets" label="Max capacity" badge="Uint<32>"
+        hint="Maximum tickets this event will ever issue. Permanent — choose carefully.">
+        <input id="totalTickets" type="number" min={1} max={4294967295}
+          value={form.totalTickets} onChange={onChange("totalTickets")} required className={inputCls} />
+      </Field>
+
+      <div className="pt-2">
+        <button type="button" onClick={onNext} disabled={!canContinue}
+          className="w-full bg-white text-black text-sm font-semibold py-3 hover:bg-zinc-100 disabled:opacity-25 disabled:cursor-not-allowed transition-colors">
+          Next: Details →
+        </button>
+      </div>
     </div>
   );
 }
 
-const inputCls =
-  "w-full bg-white/[0.03] border border-white/8 px-4 py-3 text-sm text-white placeholder-zinc-700 focus:outline-none focus:border-white/25 disabled:opacity-40 transition-colors rounded-none";
+// ─── Step 1 — Details (off-chain) ────────────────────────────────────────────
 
-// ─── Data model info panel ────────────────────────────────────────────────────
+function Step1({
+  form, onChange, onTextAreaChange, onBack, onNext,
+}: {
+  form: FormState;
+  onChange: (key: keyof FormState) => (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onTextAreaChange: (key: keyof FormState) => (e: React.ChangeEvent<HTMLTextAreaElement>) => void;
+  onBack: () => void;
+  onNext: () => void;
+}) {
+  const canContinue =
+    form.description.trim().length > 0 &&
+    form.location.trim().length > 0 &&
+    !!form.eventDate &&
+    !!form.eventTime;
 
-function DataModelPanel() {
   return (
-    <div className="border border-white/8 bg-white/[0.018] p-5 space-y-5">
-      <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-widest">
-        Data model
-      </p>
-
-      <div className="space-y-2.5">
-        <div className="flex items-center gap-2">
-          <span className="text-[9px] font-mono font-semibold text-white/50 border border-white/10 px-1.5 py-0.5 leading-tight">
-            ON-CHAIN
-          </span>
-          <span className="text-[10px] text-zinc-700">Midnight ledger</span>
-        </div>
-        <ul className="space-y-1.5 pl-1">
-          {[
-            { field: "event_name",     type: "Bytes<32>", note: "UTF-8, padded"   },
-            { field: "total_tickets",  type: "Uint<32>",  note: "immutable cap"   },
-            { field: "organizer",      type: "Bytes<32>", note: "hash commitment" },
-            { field: "tickets_issued", type: "Counter",   note: "monotonic"       },
-            { field: "is_active",      type: "Boolean",   note: ""                },
-            { field: "is_cancelled",   type: "Boolean",   note: "permanent"       },
-          ].map(({ field, type, note }) => (
-            <li key={field} className="flex items-baseline gap-1.5 flex-wrap">
-              <code className="text-[11px] font-mono text-zinc-400 shrink-0">{field}</code>
-              <span className="text-[10px] font-mono text-zinc-700">:{type}</span>
-              {note && <span className="text-[9px] text-zinc-700 italic">{note}</span>}
-            </li>
-          ))}
-        </ul>
+    <div className="space-y-6">
+      <div className="mb-2">
+        <p className="text-[10px] font-semibold text-zinc-600 uppercase tracking-widest mb-2">Step 2 of 3</p>
+        <h2 className="text-lg font-bold text-white mb-1">Describe the event</h2>
+        <p className="text-sm text-zinc-600 leading-relaxed">
+          Stored in the backend — editable later. Cover image is optional;
+          if blank, a generated visual unique to the event name is shown.
+        </p>
       </div>
 
-      <div className="h-px bg-white/6" />
+      <Field id="description" label="Description">
+        <textarea id="description" placeholder="Tell attendees what this event is about…"
+          value={form.description} onChange={onTextAreaChange("description")}
+          rows={4} maxLength={5000} required className={`${inputCls} resize-none`} />
+      </Field>
 
-      <div className="space-y-2.5">
-        <div className="flex items-center gap-2">
-          <span className="text-[9px] font-mono font-semibold text-amber-500/70 border border-amber-500/20 px-1.5 py-0.5 leading-tight">
-            BROWSER
-          </span>
-          <span className="text-[10px] text-zinc-700">localStorage</span>
-        </div>
-        <ul className="space-y-1.5 pl-1">
-          {[
-            { field: "callerSecretHex", critical: true  },
-            { field: "contractAddress", critical: false },
-            { field: "eventName",       critical: false },
-            { field: "description",     critical: false },
-            { field: "location",        critical: false },
-            { field: "eventDate",       critical: false },
-          ].map(({ field, critical }) => (
-            <li key={field} className="flex items-center gap-1.5">
-              <span className={`w-1 h-1 rounded-full shrink-0 ${critical ? "bg-amber-400" : "bg-zinc-700"}`} />
-              <code className={`text-[11px] font-mono ${critical ? "text-amber-400/90" : "text-zinc-500"}`}>
-                {field}
-              </code>
-              {critical && (
-                <span className="text-[9px] font-semibold text-amber-700 uppercase tracking-wide">
-                  critical
+      <Field id="location" label="Location">
+        <input id="location" type="text" placeholder="City, venue, or Online"
+          value={form.location} onChange={onChange("location")} maxLength={300} required className={inputCls} />
+      </Field>
+
+      <div className="grid grid-cols-2 gap-4">
+        <Field id="eventDate" label="Date">
+          <input id="eventDate" type="date" value={form.eventDate}
+            onChange={onChange("eventDate")} required className={inputCls} />
+        </Field>
+        <Field id="eventTime" label="Time (local)">
+          <input id="eventTime" type="time" value={form.eventTime}
+            onChange={onChange("eventTime")} required className={inputCls} />
+        </Field>
+      </div>
+
+      <Field id="imageUrl" label="Cover image" optional
+        hint="Paste a direct HTTPS URL (IPFS, Cloudinary…). Leave blank to use the generated placeholder.">
+        <input id="imageUrl" type="text" placeholder="https://…"
+          value={form.imageUrl} onChange={onChange("imageUrl")} className={inputCls} />
+      </Field>
+
+      <div className="flex gap-3 pt-2">
+        <button type="button" onClick={onBack}
+          className="border border-white/8 text-zinc-500 text-sm px-5 py-3 hover:text-white hover:border-white/20 transition-colors">
+          ← Back
+        </button>
+        <button type="button" onClick={onNext} disabled={!canContinue}
+          className="flex-1 bg-white text-black text-sm font-semibold py-3 hover:bg-zinc-100 disabled:opacity-25 disabled:cursor-not-allowed transition-colors">
+          Review →
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Step 2 — Review & Deploy ─────────────────────────────────────────────────
+
+function ReviewStep({
+  form, progress, loading, error, isReady,
+  onBack, onDeploy, onDismissError,
+}: {
+  form: FormState;
+  progress: ProgressStep[];
+  loading: boolean;
+  error: string | null;
+  isReady: boolean;
+  onBack: () => void;
+  onDeploy: () => void;
+  onDismissError: () => void;
+}) {
+  const dateLabel = form.eventDate && form.eventTime
+    ? new Date(`${form.eventDate}T${form.eventTime}`).toLocaleString(undefined, {
+        weekday: "short", year: "numeric", month: "long",
+        day: "numeric", hour: "2-digit", minute: "2-digit",
+      })
+    : "—";
+
+  const rows: { label: string; value: string; tag?: string }[] = [
+    { label: "Event name",   value: form.eventName || "—",   tag: "on-chain"  },
+    { label: "Max capacity", value: `${form.totalTickets} tickets`, tag: "on-chain" },
+    { label: "Date",         value: dateLabel,               tag: "off-chain" },
+    { label: "Location",     value: form.location || "—",    tag: "off-chain" },
+    { label: "Description",  value: form.description.length > 90
+        ? form.description.slice(0, 90) + "…"
+        : form.description,                                  tag: "off-chain" },
+    { label: "Cover image",  value: form.imageUrl || "Generated placeholder" },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <div className="mb-2">
+        <p className="text-[10px] font-semibold text-zinc-600 uppercase tracking-widest mb-2">Step 3 of 3</p>
+        <h2 className="text-lg font-bold text-white mb-1">Review &amp; Deploy</h2>
+        <p className="text-sm text-zinc-600 leading-relaxed">
+          Confirm everything. On-chain fields are permanent after deploy.
+        </p>
+      </div>
+
+      <div className="border border-white/8 divide-y divide-white/6">
+        {rows.map(({ label, value, tag }) => (
+          <div key={label} className="flex items-start gap-3 px-4 py-3">
+            <div className="w-28 shrink-0 pt-0.5">
+              <p className="text-[11px] font-medium text-zinc-600">{label}</p>
+              {tag && (
+                <span className={`inline-block text-[8px] font-mono font-semibold px-1 py-0.5 leading-tight mt-0.5 ${
+                  tag === "on-chain"
+                    ? "text-white/35 bg-white/[0.06]"
+                    : "text-zinc-700 bg-white/[0.03]"
+                }`}>
+                  {tag}
                 </span>
               )}
-            </li>
-          ))}
-        </ul>
+            </div>
+            <p className="text-sm text-zinc-300 flex-1 leading-relaxed break-words">{value}</p>
+          </div>
+        ))}
       </div>
 
-      <div className="h-px bg-white/6" />
-
-      <div className="space-y-2.5">
-        <div className="flex items-center gap-2">
-          <span className="text-[9px] font-mono font-semibold text-blue-400/60 border border-blue-500/20 px-1.5 py-0.5 leading-tight">
-            BACKEND
-          </span>
-          <span className="text-[10px] text-zinc-700">PostgreSQL</span>
+      {!isReady && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <div className="h-px flex-1 bg-white/6" />
+            <span className="text-[10px] font-mono text-zinc-700">wallet required</span>
+            <div className="h-px flex-1 bg-white/6" />
+          </div>
+          <WalletConnect />
         </div>
-        <ul className="space-y-1.5 pl-1">
-          {["name", "description", "location", "date", "maxCapacity"].map((f) => (
-            <li key={f}>
-              <code className="text-[11px] font-mono text-zinc-500">{f}</code>
-            </li>
-          ))}
-        </ul>
+      )}
+
+      <AnimatePresence>
+        {progress.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }} className="overflow-hidden"
+          >
+            <div className="border border-white/8 bg-white/[0.02] p-5 space-y-3.5">
+              <p className="text-[10px] font-semibold text-zinc-700 uppercase tracking-widest mb-3">
+                Deployment progress
+              </p>
+              {progress.map((s) => <ProgressRow key={s.id} step={s} />)}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {error && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }} className="overflow-hidden"
+          >
+            <div className="border border-red-500/30 bg-red-500/[0.05] px-4 py-4">
+              <p className="text-sm font-semibold text-red-400 mb-1">Deployment failed</p>
+              <p className="text-xs text-zinc-500 leading-relaxed">{error}</p>
+              <button type="button" onClick={onDismissError}
+                className="text-xs text-zinc-500 hover:text-white mt-3 underline underline-offset-2 transition-colors">
+                Dismiss and retry
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {loading ? (
+        <div className="w-full flex items-center justify-center gap-2.5 bg-white/[0.05] border border-white/8 text-zinc-500 text-sm py-3.5 cursor-not-allowed select-none">
+          <Spinner size={13} />
+          <span>Deploying — do not close the tab</span>
+        </div>
+      ) : !error ? (
+        <div className="flex gap-3">
+          <button type="button" onClick={onBack} disabled={loading}
+            className="border border-white/8 text-zinc-500 text-sm px-5 py-3 hover:text-white hover:border-white/20 transition-colors disabled:opacity-30">
+            ← Back
+          </button>
+          <button type="button" onClick={onDeploy} disabled={!isReady}
+            className="flex-1 bg-white text-black text-sm font-semibold py-3 hover:bg-zinc-100 disabled:opacity-25 disabled:cursor-not-allowed transition-colors">
+            Deploy &amp; Create Event
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// ─── Live event preview (right panel) ────────────────────────────────────────
+
+function LivePreview({ name, imageUrl }: { name: string; imageUrl: string }) {
+  const [imgError, setImgError] = useState(false);
+  const isUrl = imageUrl.trim().startsWith("https://") || imageUrl.trim().startsWith("http://");
+  const showImage = isUrl && !imgError;
+
+  useEffect(() => { setImgError(false); }, [imageUrl]);
+
+  return (
+    <div className="border border-white/8 overflow-hidden">
+      {showImage ? (
+        <img src={imageUrl.trim()} alt={name}
+          className="w-full aspect-video object-cover"
+          onError={() => setImgError(true)} />
+      ) : (
+        <EventPlaceholder name={name} />
+      )}
+      <div className="px-3 py-2.5 bg-white/[0.015] border-t border-white/6 flex items-center gap-2">
+        <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${showImage ? "bg-emerald-400" : "bg-zinc-700"}`} />
+        <p className="text-[10px] text-zinc-600">
+          {showImage
+            ? "Custom image"
+            : name
+            ? `Generated · unique to "${name.slice(0, 18)}${name.length > 18 ? "…" : ""}"`
+            : "Generated template"}
+        </p>
       </div>
     </div>
   );
 }
+
+// ─── Key warning panel ────────────────────────────────────────────────────────
 
 function KeyWarningPanel() {
   return (
     <div className="border border-amber-500/25 bg-amber-500/[0.04] p-5">
       <div className="flex items-start gap-3">
-        <svg
-          className="w-4 h-4 text-amber-400 mt-0.5 shrink-0"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={1.5}
-          viewBox="0 0 24 24"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z"
-          />
+        <svg className="w-4 h-4 text-amber-400 mt-0.5 shrink-0" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z" />
         </svg>
         <div className="space-y-2">
           <p className="text-sm font-semibold text-amber-400">Organizer key</p>
           <p className="text-xs text-zinc-500 leading-relaxed">
             After deploy, <code className="text-zinc-400 font-mono text-[11px]">callerSecretHex</code> is
-            automatically saved in this browser. It is the ZK preimage to the on-chain organizer
-            hash commitment.
+            saved automatically in this browser — the only preimage to the on-chain organizer hash.
           </p>
           <p className="text-xs text-zinc-600 leading-relaxed">
-            <span className="text-zinc-500 font-medium">Losing it means losing the ability to call
-            any organizer-gated circuit</span> — no one can issue, pause, cancel, or grant delegates.
-            The event becomes permanently unmanageable.
-          </p>
-          <p className="text-[11px] text-zinc-700 leading-relaxed">
-            The raw key is never sent to any server.
+            <span className="text-zinc-500 font-medium">Losing it makes the event permanently
+            unmanageable</span> — no issue, pause, cancel, or delegates are possible.
           </p>
         </div>
       </div>
@@ -265,10 +476,10 @@ function KeyWarningPanel() {
 // ─── Success screen ───────────────────────────────────────────────────────────
 
 function SuccessScreen({
-  result,
-  onManage,
+  result, form, onManage,
 }: {
   result: DeploySuccess;
+  form: FormState;
   onManage: () => void;
 }) {
   const [copied, setCopied] = useState(false);
@@ -282,17 +493,13 @@ function SuccessScreen({
 
   return (
     <motion.div
-      key="success"
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-      className="space-y-4"
+      key="success" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }} className="space-y-4"
     >
       <div className="border border-white/8 bg-white/[0.025] p-7">
-        {/* Header */}
         <div className="flex items-center gap-3 mb-7">
           <div className="w-9 h-9 bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-center shrink-0">
-            <CheckIcon className="w-4 h-4 text-emerald-400" />
+            <CheckSm />
           </div>
           <div>
             <p className="text-base font-semibold text-white">Event deployed</p>
@@ -300,124 +507,121 @@ function SuccessScreen({
           </div>
         </div>
 
-        {/* Event name */}
         <div className="mb-4 px-4 py-3 bg-white/[0.03] border border-white/6">
           <p className="text-[10px] font-medium text-zinc-600 uppercase tracking-widest mb-1.5">Event</p>
           <p className="text-sm font-semibold text-white">{result.eventName}</p>
         </div>
 
-        {/* Contract address */}
         <div className="mb-4 px-4 py-3 bg-white/[0.03] border border-white/6">
           <p className="text-[10px] font-medium text-zinc-600 uppercase tracking-widest mb-2">Contract address</p>
           <div className="flex items-start gap-2">
             <code className="text-[11px] font-mono text-zinc-300 flex-1 break-all leading-relaxed">
               {result.contractAddress}
             </code>
-            <button
-              onClick={copy}
-              className="shrink-0 text-[11px] text-zinc-500 hover:text-white border border-white/8 hover:border-white/20 px-2.5 py-1.5 transition-colors mt-0.5"
-            >
+            <button onClick={copy}
+              className="shrink-0 text-[11px] text-zinc-500 hover:text-white border border-white/8 hover:border-white/20 px-2.5 py-1.5 transition-colors mt-0.5">
               {copied ? "✓ Copied" : "Copy"}
             </button>
           </div>
         </div>
 
-        {/* Key saved */}
         <div className="mb-7 px-4 py-3.5 bg-emerald-500/[0.04] border border-emerald-500/20">
           <div className="flex items-start gap-2.5">
-            <svg
-              className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5"
-              fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24"
-            >
+            <svg className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
             </svg>
             <div>
               <p className="text-sm font-semibold text-emerald-400">Organizer key saved</p>
               <p className="text-xs text-zinc-500 mt-0.5">
-                Stored in <code className="font-mono text-[11px]">localStorage</code> — keep
-                this browser to manage the event.
+                Stored in <code className="font-mono text-[11px]">localStorage</code> — keep this browser to manage the event.
               </p>
             </div>
           </div>
         </div>
 
-        {/* CTAs */}
         <div className="flex gap-3">
-          <button
-            onClick={onManage}
-            className="flex-1 bg-white text-black text-sm font-semibold py-3 hover:bg-zinc-100 transition-colors"
-          >
+          <button onClick={onManage}
+            className="flex-1 bg-white text-black text-sm font-semibold py-3 hover:bg-zinc-100 transition-colors">
             Manage Event →
           </button>
-          <Link
-            href="/events"
-            className="flex items-center border border-white/8 text-zinc-400 text-sm px-5 py-3 hover:text-white hover:border-white/20 transition-colors"
-          >
+          <Link href="/events"
+            className="flex items-center border border-white/8 text-zinc-400 text-sm px-5 py-3 hover:text-white hover:border-white/20 transition-colors">
             All Events
           </Link>
         </div>
       </div>
 
-      {/* Reminder */}
       <div className="border border-amber-500/20 bg-amber-500/[0.03] px-4 py-3 flex items-start gap-2.5">
-        <svg
-          className="w-3.5 h-3.5 text-amber-500/70 mt-0.5 shrink-0"
-          fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"
-        >
+        <svg className="w-3.5 h-3.5 text-amber-500/70 mt-0.5 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
         </svg>
         <p className="text-xs text-zinc-600 leading-relaxed">
           Do not clear <code className="font-mono text-[11px] text-zinc-500">localStorage</code> without
-          exporting your organizer key first. The event management page lets you copy it at any time.
+          first exporting your organizer key from the event management page.
         </p>
       </div>
+
+      <LivePreview name={form.eventName} imageUrl={form.imageUrl} />
     </motion.div>
   );
 }
 
+// ─── Animation variants ───────────────────────────────────────────────────────
+
+const stepVariants = {
+  enter:  (dir: number) => ({ opacity: 0, x: dir > 0 ?  32 : -32 }),
+  center: { opacity: 1, x: 0, transition: { duration: 0.32, ease: [0.22, 1, 0.36, 1] as [number, number, number, number] } },
+  exit:   (dir: number) => ({ opacity: 0, x: dir > 0 ? -32 :  32, transition: { duration: 0.18, ease: "easeIn" } }),
+};
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function NewEventPage() {
-  const router = useRouter();
+  const router      = useRouter();
   const queryClient = useQueryClient();
   const { status, wallet } = useWallet();
 
   const [form, setForm] = useState<FormState>({
-    eventName:    "",
-    totalTickets: "100",
-    description:  "",
-    location:     "",
-    eventDate:    "",
-    eventTime:    "18:00",
+    eventName: "", totalTickets: "100",
+    description: "", location: "", eventDate: "", eventTime: "18:00",
+    imageUrl: "",
   });
 
-  const [steps,   setSteps]   = useState<Step[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error,   setError]   = useState<string | null>(null);
-  const [success, setSuccess] = useState<DeploySuccess | null>(null);
+  const [step,     setStep]     = useState(0);
+  const [dir,      setDir]      = useState(1);
+  const [progress, setProgress] = useState<ProgressStep[]>([]);
+  const [loading,  setLoading]  = useState(false);
+  const [error,    setError]    = useState<string | null>(null);
+  const [success,  setSuccess]  = useState<DeploySuccess | null>(null);
 
   const isReady = status === "connected" && wallet !== null;
 
-  function field<K extends keyof FormState>(key: K) {
-    return (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+  function onChange(key: keyof FormState) {
+    return (e: React.ChangeEvent<HTMLInputElement>) =>
       setForm((f) => ({ ...f, [key]: e.target.value }));
   }
 
-  function bumpStep(id: string, s: StepStatus, detail?: string) {
-    setSteps((prev) =>
-      prev.map((step) =>
-        step.id === id ? { ...step, status: s, ...(detail ? { detail } : {}) } : step
-      )
+  function onTextAreaChange(key: keyof FormState) {
+    return (e: React.ChangeEvent<HTMLTextAreaElement>) =>
+      setForm((f) => ({ ...f, [key]: e.target.value }));
+  }
+
+  function goTo(next: number) {
+    setDir(next > step ? 1 : -1);
+    setStep(next);
+  }
+
+  function bumpProgress(id: string, s: ProgressStatus, detail?: string) {
+    setProgress((prev) =>
+      prev.map((p) => (p.id === id ? { ...p, status: s, ...(detail ? { detail } : {}) } : p))
     );
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  async function handleDeploy() {
     if (!isReady) return;
-
     setLoading(true);
     setError(null);
-    setSteps(INITIAL_STEPS.map((s) => ({ ...s })));
+    setProgress(INITIAL_PROGRESS.map((s) => ({ ...s })));
 
     try {
       const [{ createEventTicketProviders }, { EventTicketAPI }, { PREPROD_CONFIG }] =
@@ -427,43 +631,38 @@ export default function NewEventPage() {
           import("@sdk/types"),
         ]);
 
-      // ── 1. Deploy contract ────────────────────────────────────────────────
       const providers = await createEventTicketProviders(wallet, PREPROD_CONFIG);
-      const api = await EventTicketAPI.deploy(providers);
-      bumpStep("deploy", "done", api.contractAddress);
-      bumpStep("circuit", "active");
+      const api       = await EventTicketAPI.deploy(providers);
+      bumpProgress("deploy", "done", api.contractAddress);
+      bumpProgress("circuit", "active");
 
-      // ── 2. Initialise on-chain state ──────────────────────────────────────
       await api.createEvent(form.eventName.trim(), BigInt(form.totalTickets));
-      bumpStep("circuit", "done");
-      bumpStep("key", "active");
+      bumpProgress("circuit", "done");
+      bumpProgress("key", "active");
 
-      // ── 3. Persist organizer key + metadata ───────────────────────────────
       const eventDateIso =
         form.eventDate && form.eventTime
           ? new Date(`${form.eventDate}T${form.eventTime}:00`).toISOString()
           : new Date().toISOString();
 
-      // Store the secret under a separate key — never mixed in with the
-      // public event list. This is the only copy that exists.
+      // callerSecret is the only copy that exists — save it before anything else.
       saveCallerSecret(api.contractAddress, api.callerSecretHex());
-
       saveEvent({
         contractAddress: api.contractAddress,
         eventName:       form.eventName.trim(),
         totalTickets:    parseInt(form.totalTickets, 10),
-        txId:            "",   // individual circuit txId not critical here
+        txId:            "",
         createdAt:       new Date().toISOString(),
         callerSecretHex: api.callerSecretHex(),
         description:     form.description.trim(),
         location:        form.location.trim(),
         eventDate:       eventDateIso,
+        imageUrl:        form.imageUrl.trim() || undefined,
       });
 
-      bumpStep("key", "done");
-      bumpStep("backend", "active");
+      bumpProgress("key", "done");
+      bumpProgress("backend", "active");
 
-      // ── 4. Register in backend (non-fatal) ────────────────────────────────
       try {
         await backendApi.events.create({
           contractAddress: api.contractAddress,
@@ -475,20 +674,15 @@ export default function NewEventPage() {
         });
         await queryClient.invalidateQueries({ queryKey: ["events"] });
       } catch {
-        console.warn("Backend sync failed — event is still live on-chain.");
+        console.warn("Backend sync failed — event is live on-chain.");
       }
 
-      bumpStep("backend", "done");
-
-      setSuccess({
-        contractAddress: api.contractAddress,
-        callerSecretHex: api.callerSecretHex(),
-        eventName:       form.eventName.trim(),
-      });
+      bumpProgress("backend", "done");
+      setSuccess({ contractAddress: api.contractAddress, eventName: form.eventName.trim() });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setError(msg);
-      setSteps((prev) =>
+      setProgress((prev) =>
         prev.map((s) => (s.status === "active" ? { ...s, status: "error" } : s))
       );
     } finally {
@@ -504,230 +698,100 @@ export default function NewEventPage() {
 
         <div className="relative mx-auto max-w-5xl px-5 pt-10 pb-28">
 
-          {/* Breadcrumb */}
           <div className="flex items-center gap-2 text-xs text-zinc-700 mb-10">
             <Link href="/events" className="hover:text-zinc-400 transition-colors">Events</Link>
             <span>/</span>
             <span className="text-zinc-500">New</span>
           </div>
 
-          {/* Two-column layout */}
-          <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-8 items-start">
+          <div className="mb-8">
+            <p className="text-[10px] font-semibold text-zinc-600 uppercase tracking-widest mb-2">Organizer</p>
+            <h1 className="text-2xl font-bold text-white tracking-tight mb-2">Create Event</h1>
+            <p className="text-sm text-zinc-600 max-w-md">
+              Deploy a zero-knowledge ticketing contract on Midnight.
+            </p>
+          </div>
 
-            {/* ── Left: form or success ───────────────────────────────── */}
+          <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-10 items-start">
+
+            {/* Left: wizard / success */}
             <AnimatePresence mode="wait">
               {success ? (
                 <SuccessScreen
-                  key="success"
-                  result={success}
-                  onManage={() =>
-                    router.push(`/events/${encodeURIComponent(success.contractAddress)}`)
-                  }
+                  key="success" result={success} form={form}
+                  onManage={() => router.push(`/events/${encodeURIComponent(success.contractAddress)}`)}
                 />
               ) : (
-                <motion.div
-                  key="form"
-                  initial={{ opacity: 0, y: 12 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -8 }}
-                  transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-                >
-                  {/* Heading */}
-                  <div className="mb-8">
-                    <p className="text-[10px] font-semibold text-zinc-600 uppercase tracking-widest mb-2">
-                      Organizer
-                    </p>
-                    <h1 className="text-2xl font-bold text-white tracking-tight mb-2.5">
-                      Create Event
-                    </h1>
-                    <p className="text-sm text-zinc-500 leading-relaxed max-w-lg">
-                      Deploy a zero-knowledge ticketing contract on Midnight.
-                      Your identity is committed on-chain as a hash — the raw
-                      organizer key only lives in your browser.
-                    </p>
-                  </div>
+                <motion.div key="wizard" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                  <Stepper current={step} />
 
-                  <form onSubmit={handleSubmit} className="space-y-9">
-
-                    {/* ── On-chain fields ─────────────────────────────── */}
-                    <div className="space-y-5">
-                      <SectionDivider label="On-chain" sub="committed to Midnight ledger" />
-
-                      <Field
-                        id="eventName"
-                        label="Event name"
-                        badge="Bytes<32>"
-                        hint="Stored on-chain padded to 32 bytes UTF-8. Will be truncated beyond 32 characters."
-                      >
-                        <input
-                          id="eventName"
-                          type="text"
-                          placeholder="e.g. DevCon 2026"
-                          value={form.eventName}
-                          onChange={field("eventName")}
-                          maxLength={32}
-                          required
-                          disabled={loading}
-                          className={inputCls}
-                        />
-                      </Field>
-
-                      <Field
-                        id="totalTickets"
-                        label="Max capacity"
-                        badge="Uint<32>"
-                        hint="Maximum tickets the contract will ever issue. Immutable after deploy."
-                      >
-                        <input
-                          id="totalTickets"
-                          type="number"
-                          min={1}
-                          max={4294967295}
-                          value={form.totalTickets}
-                          onChange={field("totalTickets")}
-                          required
-                          disabled={loading}
-                          className={inputCls}
-                        />
-                      </Field>
-                    </div>
-
-                    {/* ── Off-chain fields ─────────────────────────────── */}
-                    <div className="space-y-5">
-                      <SectionDivider label="Off-chain" sub="backend + browser only" />
-
-                      <Field id="description" label="Description">
-                        <textarea
-                          id="description"
-                          placeholder="Tell attendees what this event is about…"
-                          value={form.description}
-                          onChange={field("description")}
-                          rows={3}
-                          maxLength={5000}
-                          required
-                          disabled={loading}
-                          className={`${inputCls} resize-none`}
-                        />
-                      </Field>
-
-                      <Field id="location" label="Location">
-                        <input
-                          id="location"
-                          type="text"
-                          placeholder="City, venue, or Online"
-                          value={form.location}
-                          onChange={field("location")}
-                          maxLength={300}
-                          required
-                          disabled={loading}
-                          className={inputCls}
-                        />
-                      </Field>
-
-                      <div className="grid grid-cols-2 gap-4">
-                        <Field id="eventDate" label="Date">
-                          <input
-                            id="eventDate"
-                            type="date"
-                            value={form.eventDate}
-                            onChange={field("eventDate")}
-                            required
-                            disabled={loading}
-                            className={inputCls}
-                          />
-                        </Field>
-                        <Field id="eventTime" label="Time (local)">
-                          <input
-                            id="eventTime"
-                            type="time"
-                            value={form.eventTime}
-                            onChange={field("eventTime")}
-                            required
-                            disabled={loading}
-                            className={inputCls}
-                          />
-                        </Field>
-                      </div>
-                    </div>
-
-                    {/* ── Wallet gate ──────────────────────────────────── */}
-                    {!isReady && (
-                      <div className="space-y-4">
-                        <SectionDivider label="Wallet" sub="required to sign transactions" />
-                        <WalletConnect />
-                      </div>
+                  <AnimatePresence custom={dir} mode="wait">
+                    {step === 0 && (
+                      <motion.div key="s0" custom={dir} variants={stepVariants} initial="enter" animate="center" exit="exit">
+                        <Step0 form={form} onChange={onChange} onNext={() => goTo(1)} />
+                      </motion.div>
                     )}
-
-                    {/* ── Deploy progress ──────────────────────────────── */}
-                    <AnimatePresence>
-                      {steps.length > 0 && (
-                        <motion.div
-                          initial={{ opacity: 0, height: 0 }}
-                          animate={{ opacity: 1, height: "auto" }}
-                          exit={{ opacity: 0, height: 0 }}
-                          className="overflow-hidden"
-                        >
-                          <div className="border border-white/8 bg-white/[0.02] p-5 space-y-3.5">
-                            <p className="text-[10px] font-semibold text-zinc-600 uppercase tracking-widest mb-4">
-                              Deployment progress
-                            </p>
-                            {steps.map((step) => <StepRow key={step.id} step={step} />)}
-                          </div>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-
-                    {/* ── Error ────────────────────────────────────────── */}
-                    <AnimatePresence>
-                      {error && (
-                        <motion.div
-                          initial={{ opacity: 0, height: 0 }}
-                          animate={{ opacity: 1, height: "auto" }}
-                          exit={{ opacity: 0, height: 0 }}
-                          className="overflow-hidden"
-                        >
-                          <div className="border border-red-500/30 bg-red-500/[0.05] px-4 py-4">
-                            <p className="text-sm font-semibold text-red-400 mb-1">
-                              Deployment failed
-                            </p>
-                            <p className="text-xs text-zinc-500 leading-relaxed">{error}</p>
-                            <button
-                              type="button"
-                              onClick={() => { setError(null); setSteps([]); setLoading(false); }}
-                              className="text-xs text-zinc-500 hover:text-white mt-3 underline underline-offset-2 transition-colors"
-                            >
-                              Dismiss and retry
-                            </button>
-                          </div>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-
-                    {/* ── Submit / loading button ───────────────────────── */}
-                    {loading ? (
-                      <div className="w-full flex items-center justify-center gap-2.5 bg-white/[0.05] border border-white/8 text-zinc-500 text-sm py-3.5 cursor-not-allowed select-none">
-                        <Spinner size={13} />
-                        <span>Deploying — do not close the tab</span>
-                      </div>
-                    ) : !error ? (
-                      <button
-                        type="submit"
-                        disabled={!isReady}
-                        className="w-full bg-white text-black text-sm font-semibold py-3.5 hover:bg-zinc-100 disabled:opacity-25 disabled:cursor-not-allowed transition-colors"
-                      >
-                        Deploy &amp; Create Event
-                      </button>
-                    ) : null}
-
-                  </form>
+                    {step === 1 && (
+                      <motion.div key="s1" custom={dir} variants={stepVariants} initial="enter" animate="center" exit="exit">
+                        <Step1 form={form} onChange={onChange} onTextAreaChange={onTextAreaChange}
+                          onBack={() => goTo(0)} onNext={() => goTo(2)} />
+                      </motion.div>
+                    )}
+                    {step === 2 && (
+                      <motion.div key="s2" custom={dir} variants={stepVariants} initial="enter" animate="center" exit="exit">
+                        <ReviewStep form={form} progress={progress} loading={loading} error={error}
+                          isReady={isReady} onBack={() => goTo(1)} onDeploy={handleDeploy}
+                          onDismissError={() => { setError(null); setProgress([]); }} />
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                 </motion.div>
               )}
             </AnimatePresence>
 
-            {/* ── Right: info panels (sticky) ──────────────────────────── */}
+            {/* Right: live preview + context */}
             <div className="space-y-4 lg:sticky lg:top-20">
-              <DataModelPanel />
-              <KeyWarningPanel />
+              <LivePreview name={form.eventName} imageUrl={form.imageUrl} />
+
+              {step < 2 && (
+                <div className="border border-white/6 bg-white/[0.015] p-4 space-y-3">
+                  <p className="text-[10px] font-semibold text-zinc-600 uppercase tracking-widest">
+                    {step === 0 ? "On-chain data" : "Off-chain data"}
+                  </p>
+                  {step === 0 ? (
+                    <ul className="space-y-2">
+                      {[
+                        { f: "event_name",    t: "Bytes<32>", n: "UTF-8 padded"  },
+                        { f: "total_tickets", t: "Uint<32>",  n: "immutable cap" },
+                        { f: "organizer",     t: "Bytes<32>", n: "hash only"     },
+                        { f: "is_active",     t: "Boolean",   n: ""              },
+                        { f: "is_cancelled",  t: "Boolean",   n: "permanent"     },
+                      ].map(({ f, t, n }) => (
+                        <li key={f} className="flex items-baseline gap-1.5 flex-wrap">
+                          <code className="text-[11px] font-mono text-zinc-400">{f}</code>
+                          <span className="text-[10px] font-mono text-zinc-700">:{t}</span>
+                          {n && <span className="text-[9px] text-zinc-800 italic">{n}</span>}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <ul className="space-y-1.5">
+                      {["description", "location", "date", "maxCapacity"].map((f) => (
+                        <li key={f} className="flex items-center gap-1.5">
+                          <code className="text-[11px] font-mono text-zinc-500">{f}</code>
+                          <span className="text-[9px] text-zinc-800 italic">backend</span>
+                        </li>
+                      ))}
+                      <li className="flex items-center gap-1.5 pt-1">
+                        <code className="text-[11px] font-mono text-amber-500/80">callerSecretHex</code>
+                        <span className="text-[9px] font-semibold text-amber-700 uppercase tracking-wide">critical</span>
+                      </li>
+                    </ul>
+                  )}
+                </div>
+              )}
+
+              {step === 2 && <KeyWarningPanel />}
             </div>
 
           </div>
@@ -736,4 +800,3 @@ export default function NewEventPage() {
     </>
   );
 }
-

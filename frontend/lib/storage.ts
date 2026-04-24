@@ -18,6 +18,8 @@ export interface StoredEvent {
   location: string;
   /** ISO 8601 string for the event date/time. */
   eventDate: string;
+  /** Optional cover image URL. If absent, the generative placeholder is shown. */
+  imageUrl?: string;
 }
 
 export interface TicketRequest {
