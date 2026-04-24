@@ -13,6 +13,11 @@ export interface StoredEvent {
   createdAt: string;
   /** Hex-encoded organizer caller_secret — required to manage the event. */
   callerSecretHex: string;
+  // ── Off-chain metadata (also stored in backend) ──────────────────────────
+  description: string;
+  location: string;
+  /** ISO 8601 string for the event date/time. */
+  eventDate: string;
 }
 
 export interface TicketRequest {

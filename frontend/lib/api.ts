@@ -121,10 +121,11 @@ export interface EventRecord {
 export interface CreateEventInput {
   contractAddress: string;
   name: string;
-  description?: string;
-  location?: string;
-  date?: string;
-  maxCapacity?: number;
+  description: string;
+  location: string;
+  /** ISO 8601 datetime string. */
+  date: string;
+  maxCapacity: number;
   ticketPrice?: string;
 }
 
