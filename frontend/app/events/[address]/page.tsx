@@ -8,6 +8,7 @@ import { WalletConnect } from "@/components/WalletConnect";
 import { useWallet } from "@/contexts/WalletContext";
 import {
   getEvent,
+  getCallerSecret,
   getEventRequests,
   addRequest,
   updateRequest,
@@ -20,6 +21,7 @@ import {
 import { api as backendApi } from "@/lib/api";
 
 type OrganizerTab = "requests" | "attendees" | "issue";
+type EventStatus = "active" | "paused" | "cancelled";
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 
@@ -109,6 +111,9 @@ function OrganizerView({
   } | null>(null);
   const [issuing, setIssuing] = useState(false);
   const [issueError, setIssueError] = useState<string | null>(null);
+  const [eventStatus, setEventStatus] = useState<EventStatus>("active");
+  const [statusLoading, setStatusLoading] = useState(false);
+  const [statusError, setStatusError] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
     setRequests(getEventRequests(address));
@@ -125,14 +130,36 @@ function OrganizerView({
     if (status !== "connected" || !wallet) {
       throw new Error("Wallet not connected");
     }
-    const [{ createEventTicketProviders }, { EventTicketAPI }, { PREPROD_CONFIG }] =
+    const secretHex = getCallerSecret(address);
+    if (!secretHex) throw new Error("Organizer secret not found in storage.");
+    const [{ createEventTicketProviders }, { EventTicketAPI, hexToBigint }, { PREPROD_CONFIG }] =
       await Promise.all([
         import("@sdk/providers"),
         import("@sdk/contract-api"),
         import("@sdk/types"),
       ]);
     const providers = await createEventTicketProviders(wallet, PREPROD_CONFIG);
-    return EventTicketAPI.join(providers, address);
+    return EventTicketAPI.join(providers, address, hexToBigint(secretHex));
+  }
+
+  async function changeStatus(action: "pause" | "resume" | "cancel") {
+    setStatusLoading(true);
+    setStatusError(null);
+    try {
+      const contractApi = await buildApi();
+      if (action === "pause")   await contractApi.pauseEvent();
+      if (action === "resume")  await contractApi.resumeEvent();
+      if (action === "cancel")  await contractApi.cancelEvent();
+      setEventStatus(
+        action === "pause"  ? "paused" :
+        action === "cancel" ? "cancelled" :
+        "active",
+      );
+    } catch (err) {
+      setStatusError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setStatusLoading(false);
+    }
   }
 
   async function approveRequest(req: TicketRequest) {
@@ -199,8 +226,61 @@ function OrganizerView({
     }
   }
 
+  const canIssue = eventStatus === "active" && status === "connected";
+  const isCancelled = eventStatus === "cancelled";
+
   return (
     <div>
+      {/* Event status controls */}
+      <div className="flex items-center gap-2 mb-6">
+        <span
+          className={`text-xs border px-2.5 py-1 rounded-full ${
+            isCancelled
+              ? "border-red-500/30 text-red-400"
+              : eventStatus === "paused"
+              ? "border-yellow-500/30 text-yellow-400"
+              : "border-emerald-500/30 text-emerald-400"
+          }`}
+        >
+          {isCancelled ? "Cancelled" : eventStatus === "paused" ? "Paused" : "Active"}
+        </span>
+
+        {!isCancelled && status === "connected" && (
+          <>
+            {eventStatus === "active" ? (
+              <button
+                onClick={() => changeStatus("pause")}
+                disabled={statusLoading}
+                className="text-xs text-zinc-400 hover:text-yellow-400 border border-white/8 hover:border-yellow-500/30 px-2.5 py-1 rounded-full transition-colors disabled:opacity-30"
+              >
+                {statusLoading ? "…" : "Pause"}
+              </button>
+            ) : (
+              <button
+                onClick={() => changeStatus("resume")}
+                disabled={statusLoading}
+                className="text-xs text-zinc-400 hover:text-emerald-400 border border-white/8 hover:border-emerald-500/30 px-2.5 py-1 rounded-full transition-colors disabled:opacity-30"
+              >
+                {statusLoading ? "…" : "Resume"}
+              </button>
+            )}
+            <button
+              onClick={() => {
+                if (confirm("Cancel this event permanently? This cannot be undone.")) {
+                  changeStatus("cancel");
+                }
+              }}
+              disabled={statusLoading}
+              className="text-xs text-zinc-600 hover:text-red-400 border border-white/8 hover:border-red-500/30 px-2.5 py-1 rounded-full transition-colors disabled:opacity-30"
+            >
+              Cancel event
+            </button>
+          </>
+        )}
+      </div>
+
+      {statusError && <ErrorBox message={statusError} />}
+
       {/* Stats */}
       <div className="grid grid-cols-3 gap-3 mb-6">
         {[
@@ -220,6 +300,11 @@ function OrganizerView({
 
       {/* Wallet required for actions */}
       {status !== "connected" && <WalletConnect />}
+      {isCancelled && (
+        <div className="mb-4 rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3">
+          <p className="text-xs text-red-400">This event has been permanently cancelled. No further tickets can be issued.</p>
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-white/8 mb-6">
@@ -259,7 +344,7 @@ function OrganizerView({
                 processingId={processingId}
                 onApprove={approveRequest}
                 onReject={rejectRequest}
-                walletReady={status === "connected"}
+                walletReady={canIssue}
               />
             ))
           )}
@@ -313,10 +398,10 @@ function OrganizerView({
 
           <button
             onClick={issueDirectly}
-            disabled={issuing || status !== "connected"}
+            disabled={issuing || !canIssue}
             className="w-full bg-white text-black text-sm font-medium py-3 rounded-xl hover:bg-zinc-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           >
-            {issuing ? "Generating ZK proof…" : "Issue Ticket"}
+            {issuing ? "Generating ZK proof…" : isCancelled ? "Event is cancelled" : eventStatus === "paused" ? "Event is paused" : "Issue Ticket"}
           </button>
 
           {issuing && (

@@ -3,14 +3,16 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { useQueryClient } from "@tanstack/react-query";
 import { Nav } from "@/components/Nav";
 import { WalletConnect } from "@/components/WalletConnect";
 import { useWallet } from "@/contexts/WalletContext";
-import { saveEvent } from "@/lib/storage";
+import { saveEvent, saveCallerSecret } from "@/lib/storage";
 import { api as backendApi } from "@/lib/api";
 
 export default function NewEventPage() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const { status, wallet } = useWallet();
 
   const [eventName, setEventName] = useState("");
@@ -38,13 +40,18 @@ export default function NewEventPage() {
       const api = await EventTicketAPI.deploy(providers);
       const { txId } = await api.createEvent(eventName.trim(), BigInt(totalTickets));
 
-      // Persist to localStorage so the event appears in the listing.
+      // Persist the organizer secret separately — required for all management
+      // circuits (issue, pause, cancel, grant delegate).
+      saveCallerSecret(api.contractAddress, api.callerSecretHex());
+
+      // Persist event metadata to localStorage.
       saveEvent({
         contractAddress: api.contractAddress,
         eventName: eventName.trim(),
         totalTickets: parseInt(totalTickets, 10),
         txId,
         createdAt: new Date().toISOString(),
+        callerSecretHex: api.callerSecretHex(),
       });
 
       // Persist to backend (non-fatal if offline).
@@ -54,6 +61,8 @@ export default function NewEventPage() {
           name: eventName.trim(),
           maxCapacity: parseInt(totalTickets, 10),
         });
+        // Refresh the events list so the new event appears immediately.
+        await queryClient.invalidateQueries({ queryKey: ["events"] });
       } catch {
         console.warn("Backend event sync failed — continuing.");
       }

@@ -1,25 +1,24 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
 import { Nav } from "@/components/Nav";
 import { WalletConnect } from "@/components/WalletConnect";
 import { useWallet } from "@/contexts/WalletContext";
-import { getMyEvents, type StoredEvent } from "@/lib/storage";
+import { api, type EventRecord } from "@/lib/api";
 
 export default function EventsPage() {
   const router = useRouter();
   const { status } = useWallet();
   const connected = status === "connected";
-  const [events, setEvents] = useState<StoredEvent[]>([]);
   const [lookup, setLookup] = useState("");
-  const [hydrated, setHydrated] = useState(false);
 
-  useEffect(() => {
-    setEvents(getMyEvents());
-    setHydrated(true);
-  }, []);
+  const { data: events = [], isLoading, isError } = useQuery({
+    queryKey: ["events"],
+    queryFn: () => api.events.list(),
+  });
 
   function handleLookup(e: React.FormEvent) {
     e.preventDefault();
@@ -84,9 +83,17 @@ export default function EventsPage() {
             </button>
           </form>
 
-          {!hydrated ? null : events.length === 0 ? (
+          {isLoading ? (
             <div className="text-center py-20 border border-white/6 bg-white/[0.02]">
-              <p className="text-zinc-600 text-sm">No events saved locally.</p>
+              <p className="text-zinc-600 text-sm">Loading events…</p>
+            </div>
+          ) : isError ? (
+            <div className="text-center py-20 border border-white/6 bg-white/[0.02]">
+              <p className="text-red-400 text-sm">Failed to load events. Is the backend running?</p>
+            </div>
+          ) : events.length === 0 ? (
+            <div className="text-center py-20 border border-white/6 bg-white/[0.02]">
+              <p className="text-zinc-600 text-sm">No events yet.</p>
               {connected ? (
                 <Link
                   href="/events/new"
@@ -111,20 +118,20 @@ export default function EventsPage() {
   );
 }
 
-function EventCard({ event }: { event: StoredEvent }) {
+function EventCard({ event }: { event: EventRecord }) {
   return (
     <Link
       href={`/events/${encodeURIComponent(event.contractAddress)}`}
       className="flex items-center justify-between gap-4 border border-white/8 bg-white/[0.02] hover:bg-white/[0.04] px-5 py-4 transition-colors group"
     >
       <div className="min-w-0">
-        <p className="text-sm font-semibold text-white truncate">{event.eventName}</p>
+        <p className="text-sm font-semibold text-white truncate">{event.name}</p>
         <p className="text-xs text-zinc-600 font-mono mt-1 truncate">
           {event.contractAddress}
         </p>
       </div>
       <div className="text-right shrink-0">
-        <p className="text-xs text-zinc-400 tabular-nums">{event.totalTickets} cap</p>
+        <p className="text-xs text-zinc-400 tabular-nums">{event.maxCapacity ?? "—"} cap</p>
         <p className="text-xs text-zinc-600 mt-0.5">
           {new Date(event.createdAt).toLocaleDateString()}
         </p>
