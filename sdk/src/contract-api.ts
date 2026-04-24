@@ -24,10 +24,6 @@
  *     Value: supplied via EventTicketAPI._pendingTicketNonce.
  */
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const midnightContracts = require("@midnight-ntwrk/midnight-js-contracts");
-const { deployContract, findDeployedContract } = midnightContracts;
-
 import type { MidnightProviders } from "@midnight-ntwrk/midnight-js-types";
 import type {
   DeployResult,
@@ -64,6 +60,10 @@ type LedgerView = {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let _module: any = null;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let _compiledContractClass: any = null;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let _midnightContracts: { deployContract: any; findDeployedContract: any } | null = null;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function getContractModule(): Promise<any> {
@@ -78,6 +78,45 @@ async function getContractModule(): Promise<any> {
     );
   }
   return _module;
+}
+
+/**
+ * Lazy-load CompiledContract from @midnight-ntwrk/compact-js.
+ * The package ships ESM-only — require() does not work.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function getCompiledContractClass(): Promise<any> {
+  if (_compiledContractClass) return _compiledContractClass;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mod = await import("@midnight-ntwrk/compact-js") as any;
+  _compiledContractClass = mod.CompiledContract;
+  if (!_compiledContractClass) {
+    throw new Error(
+      "@midnight-ntwrk/compact-js did not export CompiledContract. " +
+      "Check the installed package version.",
+    );
+  }
+  return _compiledContractClass;
+}
+
+/**
+ * Lazy-load deployContract / findDeployedContract from midnight-js-contracts
+ * via ESM dynamic import (the CJS bundle has a broken compact-js peer path).
+ */
+async function getMidnightContracts(): Promise<{
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  deployContract: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  findDeployedContract: any;
+}> {
+  if (_midnightContracts) return _midnightContracts;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mod = await import("@midnight-ntwrk/midnight-js-contracts") as any;
+  _midnightContracts = {
+    deployContract:       mod.deployContract,
+    findDeployedContract: mod.findDeployedContract,
+  };
+  return _midnightContracts!;
 }
 
 // ─── Field utilities ──────────────────────────────────────────────────────
@@ -133,17 +172,10 @@ async function buildCompiledContract(
   getCallerSecret: () => bigint,
   getTicketNonce: () => bigint,
 ) {
-  const mod = await getContractModule();
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let CompiledContract: any;
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    ({ CompiledContract } = require("@midnight-ntwrk/compact-js"));
-  } catch {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    ({ CompiledContract } = require("@midnight-ntwrk/compact-runtime"));
-  }
+  const [mod, CompiledContract] = await Promise.all([
+    getContractModule(),
+    getCompiledContractClass(),
+  ]);
 
   const witnesses = {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -211,10 +243,13 @@ export class EventTicketAPI {
   ): Promise<EventTicketAPI> {
     const secret = callerSecret ?? randomField();
     const api = new EventTicketAPI(providers, null, "", secret);
-    const compiled = await buildCompiledContract(
-      () => api.callerSecret,
-      () => api._getTicketNonce(),
-    );
+    const [compiled, { deployContract, findDeployedContract }] = await Promise.all([
+      buildCompiledContract(
+        () => api.callerSecret,
+        () => api._getTicketNonce(),
+      ),
+      getMidnightContracts(),
+    ]);
     const { contractAddress, txId } = (await deployContract(
       providers,
       compiled,
@@ -241,10 +276,13 @@ export class EventTicketAPI {
     callerSecret: bigint,
   ): Promise<EventTicketAPI> {
     const api = new EventTicketAPI(providers, null, contractAddress, callerSecret);
-    const compiled = await buildCompiledContract(
-      () => api.callerSecret,
-      () => api._getTicketNonce(),
-    );
+    const [compiled, { findDeployedContract }] = await Promise.all([
+      buildCompiledContract(
+        () => api.callerSecret,
+        () => api._getTicketNonce(),
+      ),
+      getMidnightContracts(),
+    ]);
     const contract = await findDeployedContract(
       providers,
       compiled,
