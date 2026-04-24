@@ -15,6 +15,7 @@ function addrShort(addr: string | null): string | null {
 
 function getDetected(availableWallets: AvailableWallet[]): AvailableWallet[] {
   if (availableWallets.length > 0) return availableWallets;
+  if (typeof window === "undefined") return [];
   const mid = (window as unknown as { midnight?: Record<string, { name?: string; icon?: string }> }).midnight;
   if (!mid) return [];
   return Object.keys(mid).map((key) => {
