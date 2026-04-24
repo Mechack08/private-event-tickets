@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
@@ -8,17 +8,31 @@ import { Nav } from "@/components/Nav";
 import { WalletConnect } from "@/components/WalletConnect";
 import { useWallet } from "@/contexts/WalletContext";
 import { api, type EventRecord } from "@/lib/api";
+import { getMyEvents, type StoredEvent } from "@/lib/storage";
 
 export default function EventsPage() {
   const router = useRouter();
   const { status } = useWallet();
   const connected = status === "connected";
   const [lookup, setLookup] = useState("");
+  const [localEvents, setLocalEvents] = useState<StoredEvent[]>([]);
 
-  const { data: events = [], isLoading, isError } = useQuery({
+  // Load localStorage events on mount (client-only).
+  useEffect(() => {
+    setLocalEvents(getMyEvents());
+  }, []);
+
+  const { data: backendEvents = [], isLoading, isError } = useQuery({
     queryKey: ["events"],
     queryFn: () => api.events.list(),
   });
+
+  // Merge: backend events take precedence; surface local-only events so the
+  // user can see their deployed events even when the backend sync failed.
+  const backendAddresses = new Set(backendEvents.map((e) => e.contractAddress));
+  const localOnly = localEvents.filter((e) => !backendAddresses.has(e.contractAddress));
+
+  const events = backendEvents;
 
   function handleLookup(e: React.FormEvent) {
     e.preventDefault();
@@ -91,7 +105,7 @@ export default function EventsPage() {
             <div className="text-center py-20 border border-white/6 bg-white/[0.02]">
               <p className="text-red-400 text-sm">Failed to load events. Is the backend running?</p>
             </div>
-          ) : events.length === 0 ? (
+          ) : events.length === 0 && localOnly.length === 0 ? (
             <div className="text-center py-20 border border-white/6 bg-white/[0.02]">
               <p className="text-zinc-600 text-sm">No events yet.</p>
               {connected ? (
@@ -110,6 +124,18 @@ export default function EventsPage() {
               {events.map((event) => (
                 <EventCard key={event.contractAddress} event={event} />
               ))}
+              {localOnly.length > 0 && (
+                <>
+                  {events.length > 0 && (
+                    <p className="text-[11px] text-zinc-700 uppercase tracking-widest pt-4 pb-1 px-1">
+                      Your events (not yet in public list)
+                    </p>
+                  )}
+                  {localOnly.map((event) => (
+                    <LocalEventCard key={event.contractAddress} event={event} />
+                  ))}
+                </>
+              )}
             </div>
           )}
         </div>
@@ -132,6 +158,33 @@ function EventCard({ event }: { event: EventRecord }) {
       </div>
       <div className="text-right shrink-0">
         <p className="text-xs text-zinc-400 tabular-nums">{event.maxCapacity ?? "—"} cap</p>
+        <p className="text-xs text-zinc-600 mt-0.5">
+          {new Date(event.createdAt).toLocaleDateString()}
+        </p>
+      </div>
+    </Link>
+  );
+}
+
+function LocalEventCard({ event }: { event: StoredEvent }) {
+  return (
+    <Link
+      href={`/events/${encodeURIComponent(event.contractAddress)}`}
+      className="flex items-center justify-between gap-4 border border-white/8 border-dashed bg-white/[0.015] hover:bg-white/[0.03] px-5 py-4 transition-colors group"
+    >
+      <div className="min-w-0">
+        <div className="flex items-center gap-2">
+          <p className="text-sm font-semibold text-white truncate">{event.eventName}</p>
+          <span className="text-[10px] font-mono text-yellow-600 border border-yellow-600/30 px-1.5 py-0.5 shrink-0">
+            local
+          </span>
+        </div>
+        <p className="text-xs text-zinc-600 font-mono mt-1 truncate">
+          {event.contractAddress}
+        </p>
+      </div>
+      <div className="text-right shrink-0">
+        <p className="text-xs text-zinc-400 tabular-nums">{event.totalTickets} cap</p>
         <p className="text-xs text-zinc-600 mt-0.5">
           {new Date(event.createdAt).toLocaleDateString()}
         </p>

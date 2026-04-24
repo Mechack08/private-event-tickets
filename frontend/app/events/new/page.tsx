@@ -50,8 +50,9 @@ interface ProgressStep {
 }
 
 interface DeploySuccess {
-  contractAddress: string;
-  eventName:       string;
+  contractAddress:  string;
+  eventName:        string;
+  backendSyncFailed?: boolean;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -553,11 +554,12 @@ function KeyWarningPanel() {
 // ─── Success screen ───────────────────────────────────────────────────────────
 
 function SuccessScreen({
-  result, form, onManage,
+  result, form, onManage, onRetryBackend,
 }: {
   result: DeploySuccess;
   form: FormState;
   onManage: () => void;
+  onRetryBackend?: () => void;
 }) {
   const [copied, setCopied] = useState(false);
 
@@ -616,6 +618,30 @@ function SuccessScreen({
             </div>
           </div>
         </div>
+
+        {result.backendSyncFailed && (
+          <div className="mb-4 px-4 py-3 bg-yellow-500/[0.06] border border-yellow-500/25 flex items-start gap-2.5">
+            <svg className="w-4 h-4 text-yellow-400 shrink-0 mt-0.5" fill="none"
+              stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round"
+                d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+            </svg>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-yellow-400">Event not yet in the public list</p>
+              <p className="text-xs text-zinc-500 mt-0.5 leading-relaxed">
+                The contract is live on-chain, but saving metadata to the backend failed.
+                Your event is stored in this browser and visible in{" "}
+                <Link href="/my-tickets" className="underline hover:text-zinc-400">My Tickets</Link>.
+                {onRetryBackend && (
+                  <button onClick={onRetryBackend}
+                    className="ml-2 underline text-zinc-400 hover:text-white transition-colors">
+                    Retry sync →
+                  </button>
+                )}
+              </p>
+            </div>
+          </div>
+        )}
 
         <div className="flex gap-3">
           <button onClick={onManage}
@@ -784,11 +810,12 @@ export default function NewEventPage() {
       bumpProgress("key", "done");
       bumpProgress("backend", "active");
 
+      let backendSyncFailed = false;
       try {
         await backendApi.events.create({
           contractAddress: api.contractAddress,
           name:            form.eventName.trim(),
-          description:     form.description.trim(),
+          description:     form.description.trim() || "—",
           location:        locationStr,
           country:         form.country  || undefined,
           city:            form.city     || undefined,
@@ -799,12 +826,15 @@ export default function NewEventPage() {
           maxCapacity:     parseInt(form.totalTickets, 10),
         });
         await queryClient.invalidateQueries({ queryKey: ["events"] });
-      } catch {
-        console.warn("Backend sync failed — event is live on-chain.");
+        bumpProgress("backend", "done");
+      } catch (syncErr) {
+        backendSyncFailed = true;
+        const syncMsg = syncErr instanceof Error ? syncErr.message : String(syncErr);
+        console.warn("Backend sync failed:", syncMsg);
+        bumpProgress("backend", "error", syncMsg.slice(0, 60));
       }
 
-      bumpProgress("backend", "done");
-      setSuccess({ contractAddress: api.contractAddress, eventName: form.eventName.trim() });
+      setSuccess({ contractAddress: api.contractAddress, eventName: form.eventName.trim(), backendSyncFailed });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setError(msg);
@@ -813,6 +843,34 @@ export default function NewEventPage() {
       );
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function retryBackendSync() {
+    if (!success) return;
+    const toIso = (d: string, t: string) =>
+      d && t ? new Date(`${d}T${t}:00`).toISOString() : new Date().toISOString();
+    const locationStr = form.address.trim() ||
+      [form.city, form.country].filter(Boolean).join(", ") || "TBD";
+    try {
+      await backendApi.events.create({
+        contractAddress: success.contractAddress,
+        name:            form.eventName.trim(),
+        description:     form.description.trim() || "—",
+        location:        locationStr,
+        country:         form.country  || undefined,
+        city:            form.city     || undefined,
+        latitude:        form.lat      ?? undefined,
+        longitude:       form.lng      ?? undefined,
+        startDate:       toIso(form.startDate, form.startTime),
+        endDate:         toIso(form.endDate,   form.endTime),
+        maxCapacity:     parseInt(form.totalTickets, 10),
+      });
+      await queryClient.invalidateQueries({ queryKey: ["events"] });
+      setSuccess((s) => s ? { ...s, backendSyncFailed: false } : s);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn("Retry backend sync failed:", msg);
     }
   }
 
@@ -846,6 +904,7 @@ export default function NewEventPage() {
                 <SuccessScreen
                   key="success" result={success} form={form}
                   onManage={() => router.push(`/events/${encodeURIComponent(success.contractAddress)}`)}
+                  onRetryBackend={success.backendSyncFailed ? retryBackendSync : undefined}
                 />
               ) : (
                 <motion.div key="wizard"
