@@ -78,7 +78,9 @@ router.post("/", requireAuth, async (req, res, next) => {
   try {
     const parsed = createEventSchema.safeParse(req.body);
     if (!parsed.success) {
-      throw createError(parsed.error.issues[0]!.message, 422);
+      const issue = parsed.error.issues[0]!;
+      const field = issue.path.length > 0 ? ` (field: ${issue.path.join(".")})`  : "";
+      throw createError(`${issue.message}${field}`, 422);
     }
 
     const { ticketPrice, startDate, endDate, ...rest } = parsed.data;

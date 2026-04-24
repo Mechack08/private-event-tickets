@@ -10,6 +10,30 @@ import { useWallet } from "@/contexts/WalletContext";
 import { api, type EventRecord } from "@/lib/api";
 import { getMyEvents, type StoredEvent } from "@/lib/storage";
 
+/**
+ * Build a safe CreateEventInput from a StoredEvent.
+ * localStorage entries from older app versions may be missing fields that are
+ * now required by the backend schema — add fallbacks so JSON.stringify never
+ * drops a required key (it silently drops `undefined` values, producing a
+ * Zod "Required" error on the server).
+ */
+function toCreateInput(event: StoredEvent) {
+  const now = new Date().toISOString();
+  return {
+    contractAddress: event.contractAddress,
+    name:            event.eventName || "Untitled Event",
+    description:     event.description || "—",
+    location:        event.location    || "TBD",
+    country:         event.country,
+    city:            event.city,
+    latitude:        event.latitude,
+    longitude:       event.longitude,
+    startDate:       event.startDate   || now,
+    endDate:         event.endDate     || now,
+    maxCapacity:     event.totalTickets || 1,
+  };
+}
+
 export default function EventsPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -48,19 +72,7 @@ export default function EventsPage() {
       let anySuccess = false;
       for (const event of localOnly) {
         try {
-          await api.events.create({
-            contractAddress: event.contractAddress,
-            name:            event.eventName,
-            description:     event.description || "—",
-            location:        event.location,
-            country:         event.country,
-            city:            event.city,
-            latitude:        event.latitude,
-            longitude:       event.longitude,
-            startDate:       event.startDate,
-            endDate:         event.endDate,
-            maxCapacity:     event.totalTickets,
-          });
+          await api.events.create(toCreateInput(event));
           anySuccess = true;
         } catch {
           // Stays visible as a local card with the manual sync button.
@@ -218,19 +230,7 @@ function LocalEventCard({ event, connected }: { event: StoredEvent; connected: b
     setSyncState("syncing");
     setSyncError(null);
     try {
-      await api.events.create({
-        contractAddress: event.contractAddress,
-        name:            event.eventName,
-        description:     event.description || "—",
-        location:        event.location,
-        country:         event.country,
-        city:            event.city,
-        latitude:        event.latitude,
-        longitude:       event.longitude,
-        startDate:       event.startDate,
-        endDate:         event.endDate,
-        maxCapacity:     event.totalTickets,
-      });
+      await api.events.create(toCreateInput(event));
       setSyncState("done");
       await queryClient.invalidateQueries({ queryKey: ["events"] });
     } catch (err) {
