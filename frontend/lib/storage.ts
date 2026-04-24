@@ -15,11 +15,14 @@ export interface StoredEvent {
   callerSecretHex: string;
   // ── Off-chain metadata (also stored in backend) ──────────────────────────
   description: string;
+  /** Full formatted address. */
   location: string;
-  /** ISO 8601 string for the event date/time. */
-  eventDate: string;
-  /** Optional cover image URL. If absent, the generative placeholder is shown. */
-  imageUrl?: string;
+  country?: string;
+  city?: string;
+  /** ISO 8601 — event start datetime. */
+  startDate: string;
+  /** ISO 8601 — event end datetime. */
+  endDate: string;
 }
 
 export interface TicketRequest {

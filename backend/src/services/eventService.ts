@@ -7,7 +7,12 @@ export interface CreateEventInput {
   name: string;
   description: string;
   location: string;
-  date: Date;
+  country?: string;
+  city?: string;
+  latitude?: number;
+  longitude?: number;
+  startDate: Date;
+  endDate: Date;
   maxCapacity: number;
   ticketPrice?: bigint;
 }
@@ -36,7 +41,7 @@ export async function createEvent(
 export async function listEvents(activeOnly = true): Promise<Event[]> {
   return prisma.event.findMany({
     where: activeOnly ? { isActive: true } : undefined,
-    orderBy: { date: "asc" },
+    orderBy: { startDate: "asc" },
   });
 }
 
@@ -53,7 +58,7 @@ export async function getEventById(id: string): Promise<Event | null> {
 export async function updateEvent(
   id: string,
   hostId: string,
-  patch: Partial<Pick<Event, "name" | "description" | "location" | "date" | "maxCapacity" | "isActive">>
+  patch: Partial<Pick<Event, "name" | "description" | "location" | "country" | "city" | "latitude" | "longitude" | "startDate" | "endDate" | "maxCapacity" | "isActive">>
 ): Promise<Event> {
   const event = await prisma.event.findUnique({ where: { id } });
   if (!event) throw createError("Event not found.", 404);

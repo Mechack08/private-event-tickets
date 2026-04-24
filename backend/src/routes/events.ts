@@ -15,8 +15,13 @@ const createEventSchema = z.object({
   contractAddress: z.string().min(10).max(200),
   name: z.string().min(1).max(200),
   description: z.string().min(1).max(5000),
-  location: z.string().min(1).max(300),
-  date: z.string().datetime(),
+  location: z.string().min(1),
+  country: z.string().max(100).optional(),
+  city: z.string().max(200).optional(),
+  latitude: z.number().optional(),
+  longitude: z.number().optional(),
+  startDate: z.string().datetime(),
+  endDate: z.string().datetime(),
   maxCapacity: z.number().int().min(1).max(100000),
   ticketPrice: z.number().int().nonnegative().optional(),
 });
@@ -24,8 +29,13 @@ const createEventSchema = z.object({
 const updateEventSchema = z.object({
   name: z.string().min(1).max(200).optional(),
   description: z.string().min(1).max(5000).optional(),
-  location: z.string().min(1).max(300).optional(),
-  date: z.string().datetime().optional(),
+  location: z.string().min(1).optional(),
+  country: z.string().max(100).optional(),
+  city: z.string().max(200).optional(),
+  latitude: z.number().optional(),
+  longitude: z.number().optional(),
+  startDate: z.string().datetime().optional(),
+  endDate: z.string().datetime().optional(),
   maxCapacity: z.number().int().min(1).max(100000).optional(),
   isActive: z.boolean().optional(),
 });
@@ -71,10 +81,11 @@ router.post("/", requireAuth, async (req, res, next) => {
       throw createError(parsed.error.issues[0]!.message, 422);
     }
 
-    const { ticketPrice, date, ...rest } = parsed.data;
+    const { ticketPrice, startDate, endDate, ...rest } = parsed.data;
     const event = await createEvent(req.session.userId!, {
       ...rest,
-      date: new Date(date),
+      startDate: new Date(startDate),
+      endDate: new Date(endDate),
       ticketPrice: ticketPrice !== undefined ? BigInt(ticketPrice) : undefined,
     });
 
@@ -95,10 +106,11 @@ router.patch("/:id", requireAuth, async (req, res, next) => {
       throw createError(parsed.error.issues[0]!.message, 422);
     }
 
-    const { date, ...rest } = parsed.data;
+    const { startDate, endDate, ...rest } = parsed.data;
     const event = await updateEvent(req.params["id"]!, req.session.userId!, {
       ...rest,
-      ...(date ? { date: new Date(date) } : {}),
+      ...(startDate ? { startDate: new Date(startDate) } : {}),
+      ...(endDate   ? { endDate:   new Date(endDate)   } : {}),
     });
     res.json(event);
   } catch (err) {

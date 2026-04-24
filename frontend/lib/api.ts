@@ -109,9 +109,14 @@ export interface EventRecord {
   name: string;
   description: string | null;
   location: string | null;
-  date: string | null;      // ISO string
+  country: string | null;
+  city: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  startDate: string | null;   // ISO string
+  endDate: string | null;     // ISO string
   maxCapacity: number | null;
-  ticketPrice: string;      // BigInt serialised as string
+  ticketPrice: string;        // BigInt serialised as string
   isActive: boolean;
   hostId: string;
   createdAt: string;
@@ -122,9 +127,16 @@ export interface CreateEventInput {
   contractAddress: string;
   name: string;
   description: string;
+  /** Full formatted address (e.g. from Nominatim). */
   location: string;
+  country?: string;
+  city?: string;
+  latitude?: number;
+  longitude?: number;
   /** ISO 8601 datetime string. */
-  date: string;
+  startDate: string;
+  /** ISO 8601 datetime string. */
+  endDate: string;
   maxCapacity: number;
   ticketPrice?: string;
 }

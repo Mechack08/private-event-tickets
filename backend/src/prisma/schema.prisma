@@ -32,8 +32,16 @@ model Event {
   contractAddress String      @unique @db.VarChar(200)
   name            String      @db.VarChar(200)
   description     String      @db.Text
-  location        String      @db.VarChar(300)
-  date            DateTime
+  // Full formatted address (e.g. from Nominatim reverse geocoding)
+  location        String      @db.Text
+  // Structured location fields (extracted from map or entered manually)
+  country         String?     @db.VarChar(100)
+  city            String?     @db.VarChar(200)
+  latitude        Float?
+  longitude       Float?
+  // Events have an explicit start and end — multi-day events are supported
+  startDate       DateTime
+  endDate         DateTime
   maxCapacity     Int
   ticketPrice     BigInt      @default(0)   // in tDUST (smallest unit)
   isActive        Boolean     @default(true)
@@ -47,7 +55,7 @@ model Event {
 
   @@index([contractAddress])
   @@index([hostId])
-  @@index([date])
+  @@index([startDate])
 }
 
 // ── Ticket ────────────────────────────────────────────────────────────────────
