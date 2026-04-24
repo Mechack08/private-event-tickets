@@ -190,12 +190,13 @@ async function buildCompiledContract(
     ],
   };
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const pipe = (...fns: any[]) => (x: any) => fns.reduce((v, f) => f(v), x);
-
-  return pipe(
+  // Build: make(tag, ContractClass).pipe(withWitnesses, withCompiledFileAssets)
+  // NOTE: make() second arg must be the class (ctor), not an instance.
+  //       createContract() internally does `new context.ctor(context.witnesses)`.
+  return CompiledContract.make("event-tickets", mod.Contract).pipe(
+    CompiledContract.withWitnesses(witnesses),
     CompiledContract.withCompiledFileAssets("/contracts/event-tickets"),
-  )(CompiledContract.make("event-tickets", new mod.Contract(witnesses)));
+  );
 }
 
 // ─── EventTicketAPI ───────────────────────────────────────────────────────
@@ -243,24 +244,19 @@ export class EventTicketAPI {
   ): Promise<EventTicketAPI> {
     const secret = callerSecret ?? randomField();
     const api = new EventTicketAPI(providers, null, "", secret);
-    const [compiled, { deployContract, findDeployedContract }] = await Promise.all([
+    const [compiled, { deployContract }] = await Promise.all([
       buildCompiledContract(
         () => api.callerSecret,
         () => api._getTicketNonce(),
       ),
       getMidnightContracts(),
     ]);
-    const { contractAddress, txId } = (await deployContract(
-      providers,
-      compiled,
-    )) as DeployResult;
-    const contract = await findDeployedContract(
-      providers,
-      compiled,
-      contractAddress,
-    );
-    console.log(`Contract deployed: ${contractAddress} (txId: ${txId})`);
-    return new EventTicketAPI(providers, contract, contractAddress, secret);
+    // deployContract returns { deployTxData, callTx, … }; contractAddress lives
+    // at deployed.deployTxData.public.contractAddress
+    const deployed = await deployContract(providers, { compiledContract: compiled });
+    const contractAddress: string = deployed.deployTxData.public.contractAddress;
+    console.log(`Contract deployed: ${contractAddress}`);
+    return new EventTicketAPI(providers, deployed, contractAddress, secret);
   }
 
   // ── Factory: join (organizer / delegate) ─────────────────────────────────
@@ -283,12 +279,8 @@ export class EventTicketAPI {
       ),
       getMidnightContracts(),
     ]);
-    const contract = await findDeployedContract(
-      providers,
-      compiled,
-      contractAddress,
-    );
-    return new EventTicketAPI(providers, contract, contractAddress, callerSecret);
+    const found = await findDeployedContract(providers, { compiledContract: compiled, contractAddress });
+    return new EventTicketAPI(providers, found, contractAddress, callerSecret);
   }
 
   // ── Factory: joinAsAttendee ───────────────────────────────────────────────
@@ -311,11 +303,11 @@ export class EventTicketAPI {
     name: string,
     totalTickets: bigint,
   ): Promise<{ txId: string }> {
-    const { txId } = (await this._contract.callTx.create_event(
+    const r = await this._contract.callTx.create_event(
       stringToBytes32(name),
       totalTickets,
-    )) as { txId: string };
-    return { txId };
+    );
+    return { txId: r.public.txId };
   }
 
   // ── Circuit: issue_ticket ────────────────────────────────────────────────
@@ -326,13 +318,11 @@ export class EventTicketAPI {
    */
   async issueTicket(): Promise<IssueTicketResult> {
     this._pendingTicketNonce = null; // witness auto-generates
-    const { txId } = (await this._contract.callTx.issue_ticket()) as {
-      txId: string;
-    };
+    const r = await this._contract.callTx.issue_ticket();
     const nonce = this._pendingTicketNonce;
     this._pendingTicketNonce = null;
     if (nonce === null) throw new Error("Witness did not generate a nonce");
-    return { txId, nonce };
+    return { txId: r.public.txId, nonce };
   }
 
   // ── Circuit: verify_ticket ───────────────────────────────────────────────
@@ -343,36 +333,34 @@ export class EventTicketAPI {
    */
   async verifyTicket(nonce: bigint): Promise<VerifyTicketResult> {
     this._pendingTicketNonce = nonce;
-    const { txId, result } = (await this._contract.callTx.verify_ticket()) as {
-      txId: string;
-      result: boolean;
-    };
+    const r = await this._contract.callTx.verify_ticket();
     this._pendingTicketNonce = null;
-    return { txId, verified: result };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return { txId: r.public.txId, verified: (r as any).private?.result ?? false };
   }
 
   // ── Circuit: pause_event ─────────────────────────────────────────────────
 
   /** Temporarily halt ticket issuance.  Organizer or delegate only. */
   async pauseEvent(): Promise<{ txId: string }> {
-    const { txId } = (await this._contract.callTx.pause_event()) as { txId: string };
-    return { txId };
+    const r = await this._contract.callTx.pause_event();
+    return { txId: r.public.txId };
   }
 
   // ── Circuit: resume_event ────────────────────────────────────────────────
 
   /** Lift a pause.  Organizer or delegate only. */
   async resumeEvent(): Promise<{ txId: string }> {
-    const { txId } = (await this._contract.callTx.resume_event()) as { txId: string };
-    return { txId };
+    const r = await this._contract.callTx.resume_event();
+    return { txId: r.public.txId };
   }
 
   // ── Circuit: cancel_event ────────────────────────────────────────────────
 
   /** Permanently close the event.  Cannot be undone.  Organizer or delegate only. */
   async cancelEvent(): Promise<{ txId: string }> {
-    const { txId } = (await this._contract.callTx.cancel_event()) as { txId: string };
-    return { txId };
+    const r = await this._contract.callTx.cancel_event();
+    return { txId: r.public.txId };
   }
 
   // ── Circuit: grant_delegate ──────────────────────────────────────────────
@@ -390,9 +378,9 @@ export class EventTicketAPI {
   async grantDelegate(): Promise<GrantDelegateResult> {
     const delegateSecret = randomField();
     this._pendingTicketNonce = delegateSecret;
-    const { txId } = (await this._contract.callTx.grant_delegate()) as { txId: string };
+    const r = await this._contract.callTx.grant_delegate();
     this._pendingTicketNonce = null;
-    return { txId, delegateSecret };
+    return { txId: r.public.txId, delegateSecret };
   }
 
   // ── Read-only: get state ─────────────────────────────────────────────────
