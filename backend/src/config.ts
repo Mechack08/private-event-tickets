@@ -38,6 +38,10 @@ const schema = z.object({
     .string()
     .default("http://localhost:3000")
     .transform((val) => val.split(",").map((s) => s.trim())),
+
+  // Google OAuth client ID — used to verify ID tokens sent from the frontend.
+  // Obtain from https://console.cloud.google.com/ → APIs & Services → Credentials.
+  GOOGLE_CLIENT_ID: z.string().min(10, "GOOGLE_CLIENT_ID is required"),
 });
 
 function loadConfig() {

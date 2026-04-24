@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Nav } from "@/components/Nav";
 import { WalletConnect } from "@/components/WalletConnect";
-import { useWallet } from "@/contexts/WalletContext";
+import { useAuth } from "@/contexts/AuthContext";
 import { api, type EventRecord } from "@/lib/api";
 import { getMyEvents, type StoredEvent } from "@/lib/storage";
 
@@ -37,8 +37,8 @@ function toCreateInput(event: StoredEvent) {
 export default function EventsPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { status } = useWallet();
-  const connected = status === "connected";
+  const { user } = useAuth();
+  const connected = !!user;
   const [lookup, setLookup] = useState("");
   const [localEvents, setLocalEvents] = useState<StoredEvent[]>([]);
   const autoSyncAttempted = useRef(false);

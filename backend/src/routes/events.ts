@@ -11,6 +11,11 @@ import {
 
 const router = Router();
 
+// BigInt (ticketPrice) cannot be JSON-serialised natively; convert to string.
+function serializeEvent<T extends { ticketPrice?: bigint | null }>(ev: T) {
+  return { ...ev, ticketPrice: ev.ticketPrice?.toString() ?? null };
+}
+
 const createEventSchema = z.object({
   contractAddress: z.string().min(10).max(200),
   name: z.string().min(1).max(200),
@@ -49,7 +54,7 @@ router.get("/", async (req, res, next) => {
   try {
     const activeOnly = req.query["all"] !== "true";
     const events = await listEvents(activeOnly);
-    res.json(events);
+    res.json(events.map(serializeEvent));
   } catch (err) {
     next(err);
   }
@@ -63,7 +68,7 @@ router.get("/by-address/:contractAddress", async (req, res, next) => {
   try {
     const event = await getEventByAddress(req.params["contractAddress"]!);
     if (!event) throw createError("Event not found.", 404);
-    res.json(event);
+    res.json(serializeEvent(event));
   } catch (err) {
     next(err);
   }
@@ -91,7 +96,7 @@ router.post("/", requireAuth, async (req, res, next) => {
       ticketPrice: ticketPrice !== undefined ? BigInt(ticketPrice) : undefined,
     });
 
-    res.status(201).json(event);
+    res.status(201).json(serializeEvent(event));
   } catch (err) {
     next(err);
   }
@@ -114,7 +119,7 @@ router.patch("/:id", requireAuth, async (req, res, next) => {
       ...(startDate ? { startDate: new Date(startDate) } : {}),
       ...(endDate   ? { endDate:   new Date(endDate)   } : {}),
     });
-    res.json(event);
+    res.json(serializeEvent(event));
   } catch (err) {
     next(err);
   }

@@ -3,11 +3,12 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { WalletConnect } from "@/components/WalletConnect";
+import { AuthButton } from "@/components/AuthButton";
 
 const links = [
-  { href: "/events", label: "Events" },
-  { href: "/my-tickets", label: "My Tickets" },
-  { href: "/verify", label: "Verify" },
+  { href: "/events",        label: "Events" },
+  { href: "/my-tickets",    label: "My Tickets" },
+  { href: "/verify",        label: "Verify" },
 ];
 
 export function Nav() {
@@ -42,6 +43,10 @@ export function Nav() {
           })}
         </nav>
 
+        {/* Auth (Google) — identity for backend */}
+        <AuthButton />
+
+        {/* Wallet — transaction signing only */}
         <WalletConnect compact />
       </div>
     </header>

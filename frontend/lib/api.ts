@@ -45,15 +45,17 @@ export class ApiError extends Error {
 
 export interface BackendUser {
   userId: string;
-  shieldedAddress: string;
+  email:  string | null;
+  name:   string | null;
 }
 
 export const api = {
   auth: {
-    connect: (shieldedAddress: string) =>
-      request<BackendUser>("/auth/connect", {
+    /** Exchange a Google ID token (credential) for a backend session. */
+    google: (credential: string) =>
+      request<BackendUser>("/auth/google", {
         method: "POST",
-        body: JSON.stringify({ shieldedAddress }),
+        body: JSON.stringify({ credential }),
       }),
 
     me: () => request<BackendUser>("/auth/me"),

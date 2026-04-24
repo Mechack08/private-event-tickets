@@ -2,15 +2,18 @@ import { prisma } from "../lib/prisma.js";
 import type { User } from "@prisma/client";
 
 /**
- * Upsert a user by their Midnight shielded address.
- * On first connection the user row is created; on subsequent connections
- * `updatedAt` is bumped but nothing else changes.
+ * Upsert a user by their Google sub (googleId).
+ * Creates the user on first sign-in; updates name on subsequent sign-ins.
  */
-export async function upsertUser(shieldedAddress: string): Promise<User> {
+export async function upsertGoogleUser(
+  googleId: string,
+  email: string,
+  name?: string,
+): Promise<User> {
   return prisma.user.upsert({
-    where: { shieldedAddress },
-    update: { updatedAt: new Date() },
-    create: { shieldedAddress },
+    where: { googleId },
+    update: { email, name: name ?? undefined, updatedAt: new Date() },
+    create: { googleId, email, name: name ?? null },
   });
 }
 

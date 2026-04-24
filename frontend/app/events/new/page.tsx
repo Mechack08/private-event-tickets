@@ -11,6 +11,7 @@ import { WalletConnect } from "@/components/WalletConnect";
 import { EventPlaceholder } from "@/components/EventPlaceholder";
 import type { LocationResult } from "@/components/LocationPickerMap";
 import { useWallet } from "@/contexts/WalletContext";
+import { useAuth } from "@/contexts/AuthContext";
 import { saveEvent, saveCallerSecret } from "@/lib/storage";
 import { api as backendApi } from "@/lib/api";
 import { COUNTRY_NAMES } from "@/lib/countries";
@@ -691,7 +692,8 @@ const stepVariants = {
 export default function NewEventPage() {
   const router      = useRouter();
   const queryClient = useQueryClient();
-  const { status, wallet, connect } = useWallet();
+  const { wallet, connect } = useWallet();
+  const { user: authUser }  = useAuth();
 
   const [form, setForm] = useState<FormState>({
     eventName: "", totalTickets: "100",
@@ -711,11 +713,11 @@ export default function NewEventPage() {
   // Forwarded to LocationPickerMap to fly to a country on selection.
   const [mapFlyQuery,  setMapFlyQuery] = useState("");
 
-  // wallet !== null means the live WalletConnectedAPI is present.
-  // status === "connected" alone is insufficient — it can be set from a
-  // restored backend session without the browser extension being connected.
-  const isReady    = wallet !== null;
-  const sessionOnly = status === "connected" && wallet === null;
+  // wallet !== null means the live WalletConnectedAPI is present and can sign.
+  // authUser !== null means the user is signed in with Google (backend session).
+  // sessionOnly: signed in but wallet not yet connected — user needs to connect wallet.
+  const isReady     = wallet !== null;
+  const sessionOnly = !!authUser && wallet === null;
 
   function onChange(key: keyof FormState) {
     return (e: React.ChangeEvent<HTMLInputElement>) =>

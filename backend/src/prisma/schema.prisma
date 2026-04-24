@@ -11,16 +11,22 @@ datasource db {
 }
 
 // ── User ─────────────────────────────────────────────────────────────────────
-// Identified by their Midnight shielded address (Bech32m, unique per wallet).
+// Identified by Google sub (googleId).  shieldedAddress can be linked later
+// when the user connects their Midnight wallet for on-chain operations.
 model User {
-  id              String   @id @default(uuid()) @db.Uuid
-  shieldedAddress String   @unique @db.VarChar(200)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id              String    @id @default(uuid()) @db.Uuid
+  googleId        String?   @unique @db.VarChar(200)
+  email           String?   @unique @db.VarChar(200)
+  name            String?   @db.VarChar(200)
+  // Optional — set when user links a Midnight wallet after signing in with Google.
+  shieldedAddress String?   @unique @db.VarChar(200)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   hostedEvents    Event[]   @relation("HostedBy")
   tickets         Ticket[]
 
+  @@index([googleId])
   @@index([shieldedAddress])
 }
 

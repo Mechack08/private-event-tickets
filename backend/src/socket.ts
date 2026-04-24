@@ -40,7 +40,7 @@ interface ServerToClientEvents {
 
 interface SocketData {
   userId: string;
-  shieldedAddress: string;
+  email: string;
 }
 
 // ── Factory ──────────────────────────────────────────────────────────────────
@@ -76,7 +76,7 @@ export function createSocketServer(
     }
 
     socket.data.userId = sess.userId;
-    socket.data.shieldedAddress = sess.shieldedAddress ?? "";
+    socket.data.email  = sess.email ?? "";
     next();
   });
 
