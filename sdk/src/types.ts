@@ -18,7 +18,7 @@ export const PROOF_SERVER_PROXY_BASE = "/api/proof";
 
 /** Public on-chain state decoded from the indexer. */
 export interface EventState {
-  /** Organizer's shielded public key (32 bytes). */
+  /** Organizer's identity commitment (hash of their secret). */
   organizer: Uint8Array;
   /** Human-readable event name, decoded from the on-chain Bytes<32>. */
   eventName: string;
@@ -26,6 +26,12 @@ export interface EventState {
   totalTickets: bigint;
   /** Number of tickets issued so far (from Counter ledger field). */
   ticketsIssued: bigint;
+  /** False when the event is paused or cancelled. */
+  isActive: boolean;
+  /** True when the event has been permanently cancelled. */
+  isCancelled: boolean;
+  /** Ticket price in tDUST — always 0 for free events (V2 placeholder). */
+  ticketPrice: bigint;
 }
 
 // ─── API call results ─────────────────────────────────────────────────────
@@ -48,6 +54,17 @@ export interface IssueTicketResult {
 export interface VerifyTicketResult {
   verified: boolean;
   txId: string;
+}
+
+/**
+ * Returned by grantDelegate().
+ * The organizer MUST share `delegateSecret` with the co-manager via a secure
+ * channel.  The co-manager passes it to EventTicketAPI.join() as callerSecret.
+ */
+export interface GrantDelegateResult {
+  txId: string;
+  /** Raw scalar the delegate must use as their caller_secret. */
+  delegateSecret: bigint;
 }
 
 // ─── Off-chain ticket secret (share with holder) ──────────────────────────

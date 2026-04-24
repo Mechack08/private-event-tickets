@@ -5,9 +5,23 @@
  * Always use dynamic import() inside an async function.
  *
  * ─── Witness mechanism ────────────────────────────────────────────────────
- * The contract has one witness: `local_secret(): Field`.
- * issueTicket() auto-generates a random Field nonce via the witness.
- * verifyTicket(nonce) supplies the holder's stored nonce via the witness.
+ *
+ * Two witnesses drive all private inputs:
+ *
+ *   caller_secret(): Field
+ *     The identity scalar of whoever is calling an organizer-gated circuit.
+ *     The contract stores persistentHash(caller_secret()) as the organizer
+ *     commitment on create_event, and verifies it (or delegate membership)
+ *     on all subsequent management circuits.
+ *     Value: supplied via EventTicketAPI._callerSecret (set at construction).
+ *
+ *   ticket_nonce(): Field
+ *     A one-time scalar tied to a single ticket.
+ *     - In issueTicket()   the SDK auto-generates a fresh random value.
+ *     - In verifyTicket()  the attendee supplies their stored nonce.
+ *     - In grantDelegate() the organizer generates a random delegate secret;
+ *       the circuit hashes it and stores only the hash on-chain.
+ *     Value: supplied via EventTicketAPI._pendingTicketNonce.
  */
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -18,6 +32,7 @@ import type { MidnightProviders } from "@midnight-ntwrk/midnight-js-types";
 import type {
   DeployResult,
   EventState,
+  GrantDelegateResult,
   IssueTicketResult,
   TicketSecret,
   VerifyTicketResult,
@@ -30,7 +45,16 @@ type LedgerView = {
   event_name: Uint8Array;
   total_tickets: bigint;
   tickets_issued: bigint;
+  is_active: boolean;
+  is_cancelled: boolean;
+  ticket_price: bigint;
   ticket_commitments: {
+    isEmpty(): boolean;
+    size(): bigint;
+    member(elem: Uint8Array): boolean;
+    [Symbol.iterator](): Iterator<Uint8Array>;
+  };
+  delegates: {
     isEmpty(): boolean;
     size(): bigint;
     member(elem: Uint8Array): boolean;
@@ -105,7 +129,10 @@ export function hexToBigint(hex: string): bigint {
 
 // ─── CompiledContract builder ─────────────────────────────────────────────
 
-async function buildCompiledContract(getLocalSecret: () => bigint) {
+async function buildCompiledContract(
+  getCallerSecret: () => bigint,
+  getTicketNonce: () => bigint,
+) {
   const mod = await getContractModule();
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -120,9 +147,14 @@ async function buildCompiledContract(getLocalSecret: () => bigint) {
 
   const witnesses = {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    local_secret: (context: any): [any, bigint] => [
+    caller_secret: (context: any): [any, bigint] => [
       context.privateState,
-      getLocalSecret(),
+      getCallerSecret(),
+    ],
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ticket_nonce: (context: any): [any, bigint] => [
+      context.privateState,
+      getTicketNonce(),
     ],
   };
 
@@ -137,27 +169,52 @@ async function buildCompiledContract(getLocalSecret: () => bigint) {
 // ─── EventTicketAPI ───────────────────────────────────────────────────────
 
 export class EventTicketAPI {
-  private _pendingNonce: bigint | null = null;
+  /**
+   * The caller's identity secret.  For the organizer this is generated on
+   * deploy() and must be persisted (e.g. localStorage).  For delegates it is
+   * the scalar returned by grantDelegate().  For attendees it is unused (0n).
+   */
+  readonly callerSecret: bigint;
+
+  private _pendingTicketNonce: bigint | null = null;
 
   private constructor(
     private readonly providers: MidnightProviders,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     private readonly _contract: any,
     readonly contractAddress: string,
-  ) {}
+    callerSecret: bigint,
+  ) {
+    this.callerSecret = callerSecret;
+  }
 
-  private _getLocalSecret(): bigint {
-    if (this._pendingNonce === null) {
-      this._pendingNonce = randomField();
+  private _getTicketNonce(): bigint {
+    if (this._pendingTicketNonce === null) {
+      this._pendingTicketNonce = randomField();
     }
-    return this._pendingNonce;
+    return this._pendingTicketNonce;
   }
 
   // ── Factory: deploy ──────────────────────────────────────────────────────
 
-  static async deploy(providers: MidnightProviders): Promise<EventTicketAPI> {
-    const api = new EventTicketAPI(providers, null, "");
-    const compiled = await buildCompiledContract(() => api._getLocalSecret());
+  /**
+   * Deploy a new contract instance.
+   *
+   * @param callerSecret  Optional organizer identity scalar.  If omitted a
+   *                      random one is generated.  **Store the returned
+   *                      api.callerSecret** — it is required to call any
+   *                      organizer-gated circuit later (issue, pause, cancel…).
+   */
+  static async deploy(
+    providers: MidnightProviders,
+    callerSecret?: bigint,
+  ): Promise<EventTicketAPI> {
+    const secret = callerSecret ?? randomField();
+    const api = new EventTicketAPI(providers, null, "", secret);
+    const compiled = await buildCompiledContract(
+      () => api.callerSecret,
+      () => api._getTicketNonce(),
+    );
     const { contractAddress, txId } = (await deployContract(
       providers,
       compiled,
@@ -168,23 +225,46 @@ export class EventTicketAPI {
       contractAddress,
     );
     console.log(`Contract deployed: ${contractAddress} (txId: ${txId})`);
-    return new EventTicketAPI(providers, contract, contractAddress);
+    return new EventTicketAPI(providers, contract, contractAddress, secret);
   }
 
-  // ── Factory: join ────────────────────────────────────────────────────────
+  // ── Factory: join (organizer / delegate) ─────────────────────────────────
 
+  /**
+   * Connect to an already-deployed contract as an organizer or delegate.
+   *
+   * @param callerSecret  The scalar returned by deploy() or grantDelegate().
+   */
   static async join(
     providers: MidnightProviders,
     contractAddress: string,
+    callerSecret: bigint,
   ): Promise<EventTicketAPI> {
-    const api = new EventTicketAPI(providers, null, contractAddress);
-    const compiled = await buildCompiledContract(() => api._getLocalSecret());
+    const api = new EventTicketAPI(providers, null, contractAddress, callerSecret);
+    const compiled = await buildCompiledContract(
+      () => api.callerSecret,
+      () => api._getTicketNonce(),
+    );
     const contract = await findDeployedContract(
       providers,
       compiled,
       contractAddress,
     );
-    return new EventTicketAPI(providers, contract, contractAddress);
+    return new EventTicketAPI(providers, contract, contractAddress, callerSecret);
+  }
+
+  // ── Factory: joinAsAttendee ───────────────────────────────────────────────
+
+  /**
+   * Connect to an already-deployed contract as a ticket holder.
+   * Only verifyTicket() is usable from this instance — all organizer-gated
+   * circuits will fail on-chain because callerSecret is 0n.
+   */
+  static async joinAsAttendee(
+    providers: MidnightProviders,
+    contractAddress: string,
+  ): Promise<EventTicketAPI> {
+    return EventTicketAPI.join(providers, contractAddress, 0n);
   }
 
   // ── Circuit: create_event ────────────────────────────────────────────────
@@ -193,9 +273,7 @@ export class EventTicketAPI {
     name: string,
     totalTickets: bigint,
   ): Promise<{ txId: string }> {
-    const organizerKey = await this._getOwnPubkey();
     const { txId } = (await this._contract.callTx.create_event(
-      organizerKey,
       stringToBytes32(name),
       totalTickets,
     )) as { txId: string };
@@ -205,16 +283,16 @@ export class EventTicketAPI {
   // ── Circuit: issue_ticket ────────────────────────────────────────────────
 
   /**
-   * Issue one ticket. Returns the random nonce — share it with the attendee
-   * as their ticket secret.
+   * Issue one ticket.  Returns the random nonce — share it with the attendee
+   * as their ticket secret.  Must be called by organizer or delegate.
    */
   async issueTicket(): Promise<IssueTicketResult> {
-    this._pendingNonce = null; // witness will auto-generate
+    this._pendingTicketNonce = null; // witness auto-generates
     const { txId } = (await this._contract.callTx.issue_ticket()) as {
       txId: string;
     };
-    const nonce = this._pendingNonce;
-    this._pendingNonce = null;
+    const nonce = this._pendingTicketNonce;
+    this._pendingTicketNonce = null;
     if (nonce === null) throw new Error("Witness did not generate a nonce");
     return { txId, nonce };
   }
@@ -222,17 +300,61 @@ export class EventTicketAPI {
   // ── Circuit: verify_ticket ───────────────────────────────────────────────
 
   /**
-   * Prove ticket ownership. The holder supplies the nonce from their ticket
-   * secret. Returns verified=true if the commitment is in the on-chain Set.
+   * Prove ticket ownership.  The holder supplies the nonce from their ticket
+   * secret.  Returns verified=true if the commitment is in the on-chain Set.
    */
   async verifyTicket(nonce: bigint): Promise<VerifyTicketResult> {
-    this._pendingNonce = nonce;
+    this._pendingTicketNonce = nonce;
     const { txId, result } = (await this._contract.callTx.verify_ticket()) as {
       txId: string;
       result: boolean;
     };
-    this._pendingNonce = null;
+    this._pendingTicketNonce = null;
     return { txId, verified: result };
+  }
+
+  // ── Circuit: pause_event ─────────────────────────────────────────────────
+
+  /** Temporarily halt ticket issuance.  Organizer or delegate only. */
+  async pauseEvent(): Promise<{ txId: string }> {
+    const { txId } = (await this._contract.callTx.pause_event()) as { txId: string };
+    return { txId };
+  }
+
+  // ── Circuit: resume_event ────────────────────────────────────────────────
+
+  /** Lift a pause.  Organizer or delegate only. */
+  async resumeEvent(): Promise<{ txId: string }> {
+    const { txId } = (await this._contract.callTx.resume_event()) as { txId: string };
+    return { txId };
+  }
+
+  // ── Circuit: cancel_event ────────────────────────────────────────────────
+
+  /** Permanently close the event.  Cannot be undone.  Organizer or delegate only. */
+  async cancelEvent(): Promise<{ txId: string }> {
+    const { txId } = (await this._contract.callTx.cancel_event()) as { txId: string };
+    return { txId };
+  }
+
+  // ── Circuit: grant_delegate ──────────────────────────────────────────────
+
+  /**
+   * Add a co-manager.  Organizer only.
+   *
+   * The SDK generates a random delegate secret, passes it via the ticket_nonce
+   * witness so the contract can hash and store it without the raw scalar
+   * appearing on-chain.
+   *
+   * **Share `result.delegateSecret` (hex-encoded) with the co-manager via a
+   * secure channel.**  They pass it to EventTicketAPI.join() as callerSecret.
+   */
+  async grantDelegate(): Promise<GrantDelegateResult> {
+    const delegateSecret = randomField();
+    this._pendingTicketNonce = delegateSecret;
+    const { txId } = (await this._contract.callTx.grant_delegate()) as { txId: string };
+    this._pendingTicketNonce = null;
+    return { txId, delegateSecret };
   }
 
   // ── Read-only: get state ─────────────────────────────────────────────────
@@ -246,10 +368,13 @@ export class EventTicketAPI {
     )) as LedgerView;
 
     return {
-      organizer: raw.organizer,
-      eventName: bytes32ToString(raw.event_name),
-      totalTickets: raw.total_tickets,
+      organizer:     raw.organizer,
+      eventName:     bytes32ToString(raw.event_name),
+      totalTickets:  raw.total_tickets,
       ticketsIssued: raw.tickets_issued,
+      isActive:      raw.is_active,
+      isCancelled:   raw.is_cancelled,
+      ticketPrice:   raw.ticket_price,
     };
   }
 
@@ -259,21 +384,9 @@ export class EventTicketAPI {
     return { contractAddress: this.contractAddress, nonce: bigintToHex(nonce) };
   }
 
-  private async _getOwnPubkey(): Promise<Uint8Array> {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const key = await (this.providers.walletProvider as any).shieldedAddress();
-      if (key instanceof Uint8Array) return key.slice(0, 32);
-      if (typeof key === "string") {
-        const clean = key.startsWith("0x") ? key.slice(2) : key;
-        const bytes = new Uint8Array(Math.min(32, clean.length / 2));
-        for (let i = 0; i < bytes.length; i++)
-          bytes[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16);
-        return bytes;
-      }
-    } catch {
-      // wallet provider doesn't expose shielded address — use zero key
-    }
-    return new Uint8Array(32);
+  /** Hex-encode the callerSecret for safe localStorage persistence. */
+  callerSecretHex(): string {
+    return bigintToHex(this.callerSecret);
   }
 }
+
