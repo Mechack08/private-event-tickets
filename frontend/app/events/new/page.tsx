@@ -237,12 +237,16 @@ function Step0({
 // ─── Step 1 — Details (off-chain) ────────────────────────────────────────────
 
 function Step1({
-  form, onChange, onTextAreaChange, onLocation, onBack, onNext,
+  form, onChange, onTextAreaChange, onLocation, onCountryChange, mapFlyQuery, onBack, onNext,
 }: {
   form: FormState;
   onChange: (key: keyof FormState) => (e: React.ChangeEvent<HTMLInputElement>) => void;
   onTextAreaChange: (key: keyof FormState) => (e: React.ChangeEvent<HTMLTextAreaElement>) => void;
   onLocation: (r: LocationResult) => void;
+  /** Called when the country field changes; triggers map fly for full names. */
+  onCountryChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  /** Forward-geocode query forwarded to the map (full country name). */
+  mapFlyQuery: string;
   onBack: () => void;
   onNext: () => void;
 }) {
@@ -312,18 +316,19 @@ function Step1({
       <div className="space-y-3">
         <p className="text-[10px] font-semibold text-zinc-600 uppercase tracking-widest">Location</p>
 
-        {/* Map — click to pin */}
+        {/* Map — click to pin / use location / country flies map */}
         <LocationPickerMap
           onLocation={onLocation}
           initialLat={form.lat ?? 48.8566}
           initialLng={form.lng ?? 2.3522}
+          flyToQuery={mapFlyQuery}
         />
 
         <div className="grid grid-cols-2 gap-3">
           <Field id="country" label="Country"
-            hint="Auto-filled from map, or type manually.">
+            hint="Auto-filled from map. Selecting a country focuses the map.">
             <input id="country" type="text" placeholder="e.g. France"
-              value={form.country} onChange={onChange("country")}
+              value={form.country} onChange={onCountryChange}
               list="country-list" className={inputCls} />
             <datalist id="country-list">
               {COUNTRY_NAMES.map((c) => <option key={c} value={c} />)}
@@ -362,17 +367,22 @@ function Step1({
 // ─── Step 2 — Review & Deploy ─────────────────────────────────────────────────
 
 function ReviewStep({
-  form, progress, loading, error, isReady,
-  onBack, onDeploy, onDismissError,
+  form, progress, loading, error, isReady, sessionOnly,
+  onBack, onDeploy, onDismissError, onConnect,
 }: {
   form: FormState;
   progress: ProgressStep[];
   loading: boolean;
   error: string | null;
+  /** True when wallet !== null — the live WalletConnectedAPI is available. */
   isReady: boolean;
+  /** True when status==='connected' but wallet===null (session restored, no live wallet). */
+  sessionOnly: boolean;
   onBack: () => void;
   onDeploy: () => void;
   onDismissError: () => void;
+  /** Triggers the wallet connect flow. */
+  onConnect: () => void;
 }) {
   const fmt = (d: string, t: string) =>
     d && t
@@ -434,7 +444,31 @@ function ReviewStep({
             <span className="text-[10px] font-mono text-zinc-700">wallet required</span>
             <div className="h-px flex-1 bg-white/6" />
           </div>
-          <WalletConnect />
+          {sessionOnly ? (
+            // Session was restored from the backend but the live wallet
+            // object is absent — the user must reconnect the extension.
+            <div className="border border-amber-500/20 bg-amber-500/[0.03] px-4 py-4">
+              <p className="text-sm font-semibold text-amber-400 mb-1">Wallet reconnect needed</p>
+              <p className="text-xs text-zinc-500 leading-relaxed mb-3">
+                Your session is active but the wallet extension is not connected
+                in this tab. Click below to re-connect.
+              </p>
+              <button type="button" onClick={onConnect}
+                className="flex items-center gap-2 border border-white/15 hover:border-white/30
+                  bg-white/[0.04] hover:bg-white/[0.08] text-white text-sm px-4 py-2.5
+                  transition-all duration-150 cursor-pointer">
+                <svg className="w-4 h-4 text-zinc-400" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" strokeWidth="1.5">
+                  <path strokeLinecap="round" strokeLinejoin="round"
+                    d="M12 2L4 6v6c0 4.42 3.36 8.56 8 9.56C17.64 20.56 21 16.42 21 12V6l-9-4z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4" />
+                </svg>
+                Connect Wallet
+              </button>
+            </div>
+          ) : (
+            <WalletConnect />
+          )}
         </div>
       )}
 
@@ -631,7 +665,7 @@ const stepVariants = {
 export default function NewEventPage() {
   const router      = useRouter();
   const queryClient = useQueryClient();
-  const { status, wallet } = useWallet();
+  const { status, wallet, connect } = useWallet();
 
   const [form, setForm] = useState<FormState>({
     eventName: "", totalTickets: "100",
@@ -642,18 +676,33 @@ export default function NewEventPage() {
     lat: null, lng: null,
   });
 
-  const [step,     setStep]     = useState(0);
-  const [dir,      setDir]      = useState(1);
-  const [progress, setProgress] = useState<ProgressStep[]>([]);
-  const [loading,  setLoading]  = useState(false);
-  const [error,    setError]    = useState<string | null>(null);
-  const [success,  setSuccess]  = useState<DeploySuccess | null>(null);
+  const [step,         setStep]        = useState(0);
+  const [dir,          setDir]         = useState(1);
+  const [progress,     setProgress]    = useState<ProgressStep[]>([]);
+  const [loading,      setLoading]     = useState(false);
+  const [error,        setError]       = useState<string | null>(null);
+  const [success,      setSuccess]     = useState<DeploySuccess | null>(null);
+  // Forwarded to LocationPickerMap to fly to a country on selection.
+  const [mapFlyQuery,  setMapFlyQuery] = useState("");
 
-  const isReady = status === "connected" && wallet !== null;
+  // wallet !== null means the live WalletConnectedAPI is present.
+  // status === "connected" alone is insufficient — it can be set from a
+  // restored backend session without the browser extension being connected.
+  const isReady    = wallet !== null;
+  const sessionOnly = status === "connected" && wallet === null;
 
   function onChange(key: keyof FormState) {
     return (e: React.ChangeEvent<HTMLInputElement>) =>
       setForm((f) => ({ ...f, [key]: e.target.value }));
+  }
+
+  // Country input change: update form AND fly map when a complete country is selected.
+  function onCountryChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const v = e.target.value;
+    setForm((f) => ({ ...f, country: v }));
+    if (COUNTRY_NAMES.includes(v)) {
+      setMapFlyQuery(v);
+    }
   }
 
   function onTextAreaChange(key: keyof FormState) {
@@ -815,6 +864,8 @@ export default function NewEventPage() {
                         <Step1 form={form} onChange={onChange}
                           onTextAreaChange={onTextAreaChange}
                           onLocation={onLocation}
+                          onCountryChange={onCountryChange}
+                          mapFlyQuery={mapFlyQuery}
                           onBack={() => goTo(0)} onNext={() => goTo(2)} />
                       </motion.div>
                     )}
@@ -822,8 +873,10 @@ export default function NewEventPage() {
                       <motion.div key="s2" custom={dir} variants={stepVariants}
                         initial="enter" animate="center" exit="exit">
                         <ReviewStep form={form} progress={progress}
-                          loading={loading} error={error} isReady={isReady}
+                          loading={loading} error={error}
+                          isReady={isReady} sessionOnly={sessionOnly}
                           onBack={() => goTo(1)} onDeploy={handleDeploy}
+                          onConnect={connect}
                           onDismissError={() => { setError(null); setProgress([]); }} />
                       </motion.div>
                     )}
