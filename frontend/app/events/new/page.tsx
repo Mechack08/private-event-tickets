@@ -801,8 +801,10 @@ export default function NewEventPage() {
         callerSecretHex: api.callerSecretHex(),
         description:     form.description.trim(),
         location:        locationStr,
-        country:         form.country || undefined,
-        city:            form.city    || undefined,
+        country:         form.country   || undefined,
+        city:            form.city      || undefined,
+        latitude:        form.lat       ?? undefined,
+        longitude:       form.lng       ?? undefined,
         startDate:       startDateIso,
         endDate:         endDateIso,
       });

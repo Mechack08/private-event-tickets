@@ -21,12 +21,34 @@ export async function createEvent(
   hostId: string,
   input: CreateEventInput
 ): Promise<Event> {
-  // Prevent duplicate contract addresses
   const existing = await prisma.event.findUnique({
     where: { contractAddress: input.contractAddress },
   });
+
   if (existing) {
-    throw createError("An event with that contract address already exists.", 409);
+    // A different user claiming the same contract address is always an error.
+    if (existing.hostId !== hostId) {
+      throw createError("An event with that contract address already exists.", 409);
+    }
+    // Same host re-syncing after a previous failure — update the metadata and
+    // return the record.  This makes POST /events idempotent for the owner so
+    // that retrying after a transient failure is always safe.
+    return prisma.event.update({
+      where: { contractAddress: input.contractAddress },
+      data: {
+        name:        input.name,
+        description: input.description,
+        location:    input.location,
+        country:     input.country,
+        city:        input.city,
+        latitude:    input.latitude,
+        longitude:   input.longitude,
+        startDate:   input.startDate,
+        endDate:     input.endDate,
+        maxCapacity: input.maxCapacity,
+        ...(input.ticketPrice !== undefined ? { ticketPrice: input.ticketPrice } : {}),
+      },
+    });
   }
 
   return prisma.event.create({

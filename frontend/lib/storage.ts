@@ -19,6 +19,9 @@ export interface StoredEvent {
   location: string;
   country?: string;
   city?: string;
+  /** Decimal coordinates — optional, captured from the map picker. */
+  latitude?: number;
+  longitude?: number;
   /** ISO 8601 — event start datetime. */
   startDate: string;
   /** ISO 8601 — event end datetime. */

@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Nav } from "@/components/Nav";
 import { WalletConnect } from "@/components/WalletConnect";
 import { useWallet } from "@/contexts/WalletContext";
@@ -12,10 +12,12 @@ import { getMyEvents, type StoredEvent } from "@/lib/storage";
 
 export default function EventsPage() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const { status } = useWallet();
   const connected = status === "connected";
   const [lookup, setLookup] = useState("");
   const [localEvents, setLocalEvents] = useState<StoredEvent[]>([]);
+  const autoSyncAttempted = useRef(false);
 
   // Load localStorage events on mount (client-only).
   useEffect(() => {
@@ -33,6 +35,45 @@ export default function EventsPage() {
   const localOnly = localEvents.filter((e) => !backendAddresses.has(e.contractAddress));
 
   const events = backendEvents;
+
+  // Auto-sync: when the user is authenticated and has local-only events,
+  // silently attempt to push each one to the backend once per page load.
+  // On success the query is invalidated and they appear in the public list.
+  // On failure they stay in localOnly with the manual sync button visible.
+  useEffect(() => {
+    if (!connected || localOnly.length === 0 || autoSyncAttempted.current) return;
+    autoSyncAttempted.current = true;
+
+    const syncAll = async () => {
+      let anySuccess = false;
+      for (const event of localOnly) {
+        try {
+          await api.events.create({
+            contractAddress: event.contractAddress,
+            name:            event.eventName,
+            description:     event.description || "—",
+            location:        event.location,
+            country:         event.country,
+            city:            event.city,
+            latitude:        event.latitude,
+            longitude:       event.longitude,
+            startDate:       event.startDate,
+            endDate:         event.endDate,
+            maxCapacity:     event.totalTickets,
+          });
+          anySuccess = true;
+        } catch {
+          // Stays visible as a local card with the manual sync button.
+        }
+      }
+      if (anySuccess) {
+        await queryClient.invalidateQueries({ queryKey: ["events"] });
+      }
+    };
+
+    syncAll();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected]);
 
   function handleLookup(e: React.FormEvent) {
     e.preventDefault();
@@ -132,7 +173,7 @@ export default function EventsPage() {
                     </p>
                   )}
                   {localOnly.map((event) => (
-                    <LocalEventCard key={event.contractAddress} event={event} />
+                    <LocalEventCard key={event.contractAddress} event={event} connected={connected} />
                   ))}
                 </>
               )}
@@ -166,29 +207,114 @@ function EventCard({ event }: { event: EventRecord }) {
   );
 }
 
-function LocalEventCard({ event }: { event: StoredEvent }) {
+function LocalEventCard({ event, connected }: { event: StoredEvent; connected: boolean }) {
+  const queryClient = useQueryClient();
+  const [syncState, setSyncState] = useState<"idle" | "syncing" | "done" | "error">("idle");
+  const [syncError, setSyncError] = useState<string | null>(null);
+
+  async function handleSync(e: React.MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setSyncState("syncing");
+    setSyncError(null);
+    try {
+      await api.events.create({
+        contractAddress: event.contractAddress,
+        name:            event.eventName,
+        description:     event.description || "—",
+        location:        event.location,
+        country:         event.country,
+        city:            event.city,
+        latitude:        event.latitude,
+        longitude:       event.longitude,
+        startDate:       event.startDate,
+        endDate:         event.endDate,
+        maxCapacity:     event.totalTickets,
+      });
+      setSyncState("done");
+      await queryClient.invalidateQueries({ queryKey: ["events"] });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setSyncError(msg);
+      setSyncState("error");
+    }
+  }
+
   return (
-    <Link
-      href={`/events/${encodeURIComponent(event.contractAddress)}`}
-      className="flex items-center justify-between gap-4 border border-white/8 border-dashed bg-white/[0.015] hover:bg-white/[0.03] px-5 py-4 transition-colors group"
-    >
-      <div className="min-w-0">
-        <div className="flex items-center gap-2">
-          <p className="text-sm font-semibold text-white truncate">{event.eventName}</p>
-          <span className="text-[10px] font-mono text-yellow-600 border border-yellow-600/30 px-1.5 py-0.5 shrink-0">
-            local
-          </span>
-        </div>
-        <p className="text-xs text-zinc-600 font-mono mt-1 truncate">
-          {event.contractAddress}
-        </p>
+    <div className="border border-white/8 border-dashed bg-white/[0.015]">
+      <div className="flex items-center gap-3 px-5 py-4">
+        {/* Clickable event info area */}
+        <Link
+          href={`/events/${encodeURIComponent(event.contractAddress)}`}
+          className="flex-1 min-w-0 flex items-center justify-between gap-4 group"
+        >
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <p className="text-sm font-semibold text-white truncate group-hover:text-zinc-200 transition-colors">
+                {event.eventName}
+              </p>
+              <span className="text-[10px] font-mono text-yellow-600 border border-yellow-600/30 px-1.5 py-0.5 shrink-0">
+                local
+              </span>
+            </div>
+            <p className="text-xs text-zinc-600 font-mono mt-1 truncate">
+              {event.contractAddress}
+            </p>
+          </div>
+          <div className="text-right shrink-0">
+            <p className="text-xs text-zinc-400 tabular-nums">{event.totalTickets} cap</p>
+            <p className="text-xs text-zinc-600 mt-0.5">
+              {new Date(event.createdAt).toLocaleDateString()}
+            </p>
+          </div>
+        </Link>
+
+        {/* Sync action — only visible when wallet is connected */}
+        {connected && (
+          <button
+            onClick={handleSync}
+            disabled={syncState === "syncing" || syncState === "done"}
+            title={
+              syncState === "error"
+                ? `Sync failed: ${syncError ?? "unknown error"} — click to retry`
+                : "Publish to the public event list"
+            }
+            className={[
+              "shrink-0 text-[11px] font-medium border px-3 py-1.5 transition-colors",
+              syncState === "done"
+                ? "border-emerald-500/30 text-emerald-400 cursor-default"
+                : syncState === "error"
+                ? "border-red-500/30 text-red-400 hover:border-red-400/50 hover:text-red-300"
+                : syncState === "syncing"
+                ? "border-white/10 text-zinc-600 cursor-not-allowed"
+                : "border-white/12 text-zinc-400 hover:border-white/25 hover:text-white",
+            ].join(" ")}
+          >
+            {syncState === "syncing" ? (
+              <span className="flex items-center gap-1.5">
+                <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                  <path className="opacity-80" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                Syncing
+              </span>
+            ) : syncState === "done" ? (
+              "✓ Public"
+            ) : syncState === "error" ? (
+              "Retry sync"
+            ) : (
+              "Make public"
+            )}
+          </button>
+        )}
       </div>
-      <div className="text-right shrink-0">
-        <p className="text-xs text-zinc-400 tabular-nums">{event.totalTickets} cap</p>
-        <p className="text-xs text-zinc-600 mt-0.5">
-          {new Date(event.createdAt).toLocaleDateString()}
+
+      {/* Inline error detail */}
+      {syncState === "error" && syncError && (
+        <p className="px-5 pb-3 text-[11px] text-red-400/70 font-mono truncate">
+          {syncError}
         </p>
-      </div>
-    </Link>
+      )}
+    </div>
   );
 }
