@@ -4,61 +4,77 @@ import CompactStandardLibrary;
 
 // ─── Public ledger state ──────────────────────────────────────────────────────
 //
-// All fields are publicly visible on the Midnight ledger.
-// Sensitive data (ticket secrets / nonces) NEVER appears here; only their
-// hash commitments are stored, providing privacy by default.
+// Everything here is visible on the Midnight ledger.
+// Identities (organizer, delegates) are stored as hash commitments only —
+// the raw secrets never appear on-chain.
 //
-export ledger organizer:          Bytes<32>;       // shielded pubkey of event creator
-export ledger event_name:         Bytes<32>;       // UTF-8 name padded to 32 bytes
-export ledger total_tickets:      Uint<32>;        // max tickets for this event
-export ledger tickets_issued:     Counter;         // running count of issued tickets
-export ledger ticket_commitments: Set<Bytes<32>>;  // set of issued ticket commitment hashes
+export ledger organizer:          Bytes<32>;      // persistentHash(organizer_secret)
+export ledger event_name:         Bytes<32>;      // UTF-8 name padded to 32 bytes
+export ledger total_tickets:      Uint<32>;       // max issuable tickets
+export ledger tickets_issued:     Counter;        // monotonically-increasing count
+export ledger is_active:          Boolean;        // false = paused; also false when cancelled
+export ledger is_cancelled:       Boolean;        // permanent shutdown — cannot be reversed
+export ledger ticket_price:       Uint<64>;       // reserved for V2 paid events; always 0 now
+export ledger ticket_commitments: Set<Bytes<32>>; // persistentHash(ticket_nonce) per ticket
+export ledger delegates:          Set<Bytes<32>>; // persistentHash(delegate_secret) per co-manager
 
 // ─── Witnesses ────────────────────────────────────────────────────────────────
 //
-// Implemented by the TypeScript SDK; provides the caller's private ticket nonce.
-// In issue_ticket, the organizer's SDK generates a fresh random nonce and
-// shares it with the attendee off-chain.  In verify_ticket, the attendee's
-// SDK supplies that same nonce to prove ticket ownership without revealing it.
+// caller_secret — private identity scalar of whoever is calling an
+//   organizer-gated circuit.  The SDK supplies either the organizer's stored
+//   secret or a delegate secret shared by the organizer off-chain.
 //
-witness local_secret(): Field;
+// ticket_nonce  — one-time scalar tied to a single ticket.
+//   In issue_ticket  the SDK auto-generates a fresh random value.
+//   In verify_ticket the attendee's SDK supplies the stored nonce from their
+//   ticket secret.
+//   In grant_delegate the organizer's SDK supplies the new delegate's secret
+//   so the circuit can hash and store it without the raw value touching the chain.
+//
+witness caller_secret(): Field;
+witness ticket_nonce():  Field;
 
 // ─── Circuits ─────────────────────────────────────────────────────────────────
 
 // ---------------------------------------------------------------------------
 // create_event
 //
-// Initialises the event on-chain.  The guard `organizer == default<Bytes<32>>`
-// ensures it can only be called once per deployment (default value is 0x00…00).
+// One-shot initialisation.  The guard on organizer == 0x00…00 ensures it can
+// only be called once per deployment.
 //
-// All three parameters are PRIVATE (exported circuit inputs); they are
-// explicitly disclosed so the event metadata is visible on-chain.
+// The organizer's identity is committed as persistentHash(caller_secret()) —
+// the raw secret never appears on-chain, and only someone who knows the
+// preimage can satisfy the auth assertions in all other organizer circuits.
 // ---------------------------------------------------------------------------
 export circuit create_event(
-  organizer_key : Bytes<32>,
-  name          : Bytes<32>,
-  total         : Uint<32>
+  name  : Bytes<32>,
+  total : Uint<32>
 ): [] {
   assert(organizer == default<Bytes<32>>, "Event already initialized");
-  organizer     = disclose(organizer_key);
+  organizer     = disclose(persistentHash<Field>(caller_secret()));
   event_name    = disclose(name);
   total_tickets = disclose(total);
+  is_active     = disclose(true);
+  is_cancelled  = disclose(false);
+  ticket_price  = disclose(0);
 }
 
 // ---------------------------------------------------------------------------
 // issue_ticket
 //
-// The organizer issues one ticket.  The SDK-provided witness generates a
-// fresh random nonce; its hash is stored publicly as the ticket commitment.
-// The nonce is returned to the SDK so it can be shared with the attendee
-// as their private ticket secret.
+// Issues one ticket by storing persistentHash(ticket_nonce) on-chain.
+// Callable by the organizer or any registered delegate.
 //
-// Access control: only callers whose SDK can satisfy the witness (i.e., the
-// organizer) can call this in practice — enforced off-chain by key management.
+// The SDK captures the raw nonce from the witness and returns it to the
+// caller so it can be shared with the attendee as their private ticket secret.
 // ---------------------------------------------------------------------------
 export circuit issue_ticket(): [] {
+  const caller_h: Bytes<32> = persistentHash<Field>(caller_secret());
+  assert(disclose(caller_h == organizer) || delegates.member(disclose(caller_h)), "Not authorized");
+  assert(!is_cancelled, "Event is cancelled");
+  assert(is_active, "Event is paused");
   assert(tickets_issued < total_tickets, "Event is sold out");
-  const nonce: Field       = local_secret();
+  const nonce: Field          = ticket_nonce();
   const commitment: Bytes<32> = persistentHash<Field>(nonce);
   ticket_commitments.insert(disclose(commitment));
   tickets_issued += 1;
@@ -67,15 +83,70 @@ export circuit issue_ticket(): [] {
 // ---------------------------------------------------------------------------
 // verify_ticket
 //
-// ZK proof of ticket ownership.  The holder proves they know the nonce whose
-// persistentHash is in the on-chain commitment set, WITHOUT revealing:
-//   • the nonce itself
-//   • which specific commitment matched
-//
-// Only the Boolean result (valid / invalid) is returned to the caller.
+// ZK proof of ticket ownership.  The attendee proves they know the nonce
+// whose hash is in the on-chain Set — without revealing the nonce itself
+// or which specific commitment matched.
 // ---------------------------------------------------------------------------
 export circuit verify_ticket(): Boolean {
-  const nonce: Field       = local_secret();
+  const nonce: Field          = ticket_nonce();
   const commitment: Bytes<32> = persistentHash<Field>(nonce);
   return ticket_commitments.member(disclose(commitment));
+}
+
+// ---------------------------------------------------------------------------
+// pause_event / resume_event
+//
+// Temporarily halts / restores ticket issuance.
+// Callable by the organizer or any registered delegate.
+// ---------------------------------------------------------------------------
+export circuit pause_event(): [] {
+  const caller_h: Bytes<32> = persistentHash<Field>(caller_secret());
+  assert(disclose(caller_h == organizer) || delegates.member(disclose(caller_h)), "Not authorized");
+  assert(!is_cancelled, "Event is cancelled");
+  is_active = disclose(false);
+}
+
+export circuit resume_event(): [] {
+  const caller_h: Bytes<32> = persistentHash<Field>(caller_secret());
+  assert(disclose(caller_h == organizer) || delegates.member(disclose(caller_h)), "Not authorized");
+  assert(!is_cancelled, "Event is cancelled");
+  is_active = disclose(true);
+}
+
+// ---------------------------------------------------------------------------
+// cancel_event
+//
+// Permanently closes the event.  Cannot be undone.
+// Callable by the organizer or any registered delegate.
+// ---------------------------------------------------------------------------
+export circuit cancel_event(): [] {
+  const caller_h: Bytes<32> = persistentHash<Field>(caller_secret());
+  assert(disclose(caller_h == organizer) || delegates.member(disclose(caller_h)), "Not authorized");
+  is_cancelled = disclose(true);
+  is_active    = disclose(false);
+}
+
+// ---------------------------------------------------------------------------
+// grant_delegate
+//
+// Adds a co-manager who can issue tickets, pause, resume, and cancel.
+// Only the organizer can call this.
+//
+// Flow:
+//   1. The organizer's SDK generates a random scalar (the delegate secret).
+//   2. The circuit hashes it via persistentHash(ticket_nonce()) and stores
+//      only the hash on-chain — the raw secret never touches the ledger.
+//   3. The organizer shares the raw scalar with the co-manager off-chain.
+//   4. The co-manager uses that scalar as their caller_secret in all
+//      subsequent organizer-gated circuits.
+//
+// Note: the delegates Set is append-only in this version.  To remove a
+// delegate, cancel and redeploy (V2 will add a revocation circuit).
+// ---------------------------------------------------------------------------
+export circuit grant_delegate(): [] {
+  const caller_h: Bytes<32> = persistentHash<Field>(caller_secret());
+  assert(disclose(caller_h == organizer), "Only the organizer can grant delegate access");
+  assert(!is_cancelled, "Event is cancelled");
+  const d_hash: Bytes<32> = persistentHash<Field>(ticket_nonce());
+  delegates.insert(disclose(d_hash));
 }
