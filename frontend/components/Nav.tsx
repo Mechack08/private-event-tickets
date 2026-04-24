@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { WalletConnect } from "@/components/WalletConnect";
 import { AuthButton } from "@/components/AuthButton";
 
 const links = [
@@ -43,11 +42,7 @@ export function Nav() {
           })}
         </nav>
 
-        {/* Auth (Google) — identity for backend */}
         <AuthButton />
-
-        {/* Wallet — transaction signing only */}
-        <WalletConnect compact />
       </div>
     </header>
   );

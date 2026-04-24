@@ -4,7 +4,6 @@ import { useState, useEffect, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { Nav } from "@/components/Nav";
-import { WalletConnect } from "@/components/WalletConnect";
 import { useWallet } from "@/contexts/WalletContext";
 import {
   getEvent,
@@ -101,7 +100,7 @@ function OrganizerView({
   address: string;
   event: StoredEvent;
 }) {
-  const { status, wallet } = useWallet();
+  const { wallet, connect } = useWallet();
   const [tab, setTab] = useState<OrganizerTab>("requests");
   const [requests, setRequests] = useState<TicketRequest[]>([]);
   const [processingId, setProcessingId] = useState<string | null>(null);
@@ -127,9 +126,8 @@ function OrganizerView({
   const approvedCount = requests.filter((r) => r.status === "approved").length;
 
   async function buildApi() {
-    if (status !== "connected" || !wallet) {
-      throw new Error("Wallet not connected");
-    }
+    // Connect wallet on-demand — triggers the wallet picker popup if needed.
+    const liveWallet = wallet ?? await connect();
     const secretHex = getCallerSecret(address);
     if (!secretHex) throw new Error("Organizer secret not found in storage.");
     const [{ createEventTicketProviders }, { EventTicketAPI, hexToBigint }, { PREPROD_CONFIG }] =
@@ -138,7 +136,7 @@ function OrganizerView({
         import("@sdk/contract-api"),
         import("@sdk/types"),
       ]);
-    const providers = await createEventTicketProviders(wallet, PREPROD_CONFIG);
+    const providers = await createEventTicketProviders(liveWallet, PREPROD_CONFIG);
     return EventTicketAPI.join(providers, address, hexToBigint(secretHex));
   }
 
@@ -226,7 +224,7 @@ function OrganizerView({
     }
   }
 
-  const canIssue = eventStatus === "active" && status === "connected";
+  const canIssue = eventStatus === "active";
   const isCancelled = eventStatus === "cancelled";
 
   return (
@@ -302,7 +300,6 @@ function OrganizerView({
       </div>
 
       {/* Wallet required for actions */}
-      {status !== "connected" && <WalletConnect />}
       {isCancelled && (
         <div className="mb-4 rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3">
           <p className="text-xs text-red-400">This event has been permanently cancelled. No further tickets can be issued.</p>
@@ -347,7 +344,6 @@ function OrganizerView({
                 processingId={processingId}
                 onApprove={approveRequest}
                 onReject={rejectRequest}
-                walletReady={canIssue}
               />
             ))
           )}
@@ -635,13 +631,11 @@ function RequestCard({
   processingId,
   onApprove,
   onReject,
-  walletReady,
 }: {
   req: TicketRequest;
   processingId: string | null;
   onApprove: (r: TicketRequest) => void;
   onReject: (r: TicketRequest) => void;
-  walletReady: boolean;
 }) {
   const [copiedSecret, setCopiedSecret] = useState(false);
   const busy = processingId === req.id;
@@ -674,7 +668,7 @@ function RequestCard({
         <div className="flex gap-2 mt-3">
           <button
             onClick={() => onApprove(req)}
-            disabled={busy || !walletReady}
+            disabled={busy}
             className="flex-1 bg-white text-black text-xs font-medium py-2 rounded-lg hover:bg-zinc-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           >
             {busy ? "Issuing…" : "Approve"}

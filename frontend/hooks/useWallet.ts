@@ -40,7 +40,7 @@ export interface WalletState {
   error: string | null;
   /** All detected Midnight wallets in window.midnight */
   availableWallets: AvailableWallet[];
-  connect: (walletKey?: string) => Promise<void>;
+  connect: (walletKey?: string) => Promise<WalletConnectedAPI>;
   disconnect: () => void;
 }
 
@@ -59,7 +59,10 @@ export function useWallet(): WalletState {
 
   const walletRef = useRef<WalletConnectedAPI | null>(null);
 
-  const connect = useCallback(async (walletKey?: string) => {
+  const connect = useCallback(async (walletKey?: string): Promise<WalletConnectedAPI> => {
+    // If already connected, return the existing wallet immediately.
+    if (walletRef.current) return walletRef.current;
+
     setStatus("connecting");
     setError(null);
 
@@ -99,10 +102,12 @@ export function useWallet(): WalletState {
       }
 
       setStatus("connected");
+      return connected as WalletConnectedAPI;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setError(message);
       setStatus("error");
+      throw err;
     }
   }, []);
 

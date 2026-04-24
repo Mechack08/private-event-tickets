@@ -2,14 +2,13 @@
 
 import { useState } from "react";
 import { Nav } from "@/components/Nav";
-import { WalletConnect } from "@/components/WalletConnect";
 import { useWallet } from "@/contexts/WalletContext";
 import { api as backendApi } from "@/lib/api";
 
 type Phase = "idle" | "parsing" | "proving" | "done" | "error";
 
 export default function VerifyPage() {
-  const { status, wallet } = useWallet();
+  const { wallet, connect } = useWallet();
 
   const [secretJson, setSecretJson] = useState("");
   const [phase, setPhase] = useState<Phase>("idle");
@@ -17,12 +16,10 @@ export default function VerifyPage() {
   const [txId, setTxId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const isWalletReady = status === "connected" && wallet !== null;
   const loading = phase === "parsing" || phase === "proving";
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!isWalletReady) return;
 
     setPhase("parsing");
     setError(null);
@@ -50,6 +47,9 @@ export default function VerifyPage() {
     setPhase("proving");
 
     try {
+      // Connect wallet on-demand — triggers the wallet picker popup if needed.
+      const liveWallet = wallet ?? await connect();
+
       const [
         { createEventTicketProviders },
         { EventTicketAPI, hexToBigint },
@@ -60,7 +60,7 @@ export default function VerifyPage() {
         import("@sdk/types"),
       ]);
 
-      const providers = await createEventTicketProviders(wallet, PREPROD_CONFIG);
+      const providers = await createEventTicketProviders(liveWallet, PREPROD_CONFIG);
       const contractApi = await EventTicketAPI.join(providers, secret.contractAddress);
       const { verified: ok, txId: id } = await contractApi.verifyTicket(
         hexToBigint(secret.nonce),
@@ -101,8 +101,6 @@ export default function VerifyPage() {
             </p>
           </div>
 
-          <WalletConnect />
-
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>
               <label
@@ -125,17 +123,11 @@ export default function VerifyPage() {
 
             <button
               type="submit"
-              disabled={loading || !isWalletReady}
+              disabled={loading}
               className="w-full bg-white text-black text-sm font-semibold py-3 hover:bg-zinc-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
             >
               {loading ? "Generating proof…" : "Verify Ticket"}
             </button>
-
-            {!isWalletReady && (
-              <p className="text-xs text-zinc-600 text-center">
-                Connect the wallet that received this ticket to continue
-              </p>
-            )}
           </form>
 
           {phase === "proving" && (

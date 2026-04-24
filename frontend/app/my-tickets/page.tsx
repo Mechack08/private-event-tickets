@@ -3,7 +3,6 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { Nav } from "@/components/Nav";
-import { WalletConnect } from "@/components/WalletConnect";
 import { useWallet } from "@/contexts/WalletContext";
 import {
   getMyTickets,
@@ -13,7 +12,6 @@ import {
 } from "@/lib/storage";
 
 export default function MyTicketsPage() {
-  const { status, wallet } = useWallet();
   const [tickets, setTickets] = useState<SavedTicket[]>([]);
   const [hydrated, setHydrated] = useState(false);
 
@@ -154,7 +152,6 @@ export default function MyTicketsPage() {
                 <TicketCard
                   key={ticket.id}
                   ticket={ticket}
-                  walletReady={status === "connected" && wallet !== null}
                   onRemove={handleRemove}
                 />
               ))}
@@ -170,14 +167,12 @@ export default function MyTicketsPage() {
 
 function TicketCard({
   ticket,
-  walletReady,
   onRemove,
 }: {
   ticket: SavedTicket;
-  walletReady: boolean;
   onRemove: (id: string) => void;
 }) {
-  const { wallet } = useWallet();
+  const { wallet, connect } = useWallet();
   const [expanded, setExpanded] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [verifyResult, setVerifyResult] = useState<boolean | null>(null);
@@ -193,11 +188,13 @@ function TicketCard({
   }
 
   async function verify() {
-    if (!walletReady || !wallet) return;
     setVerifying(true);
     setVerifyResult(null);
     setVerifyError(null);
     try {
+      // Connect wallet on-demand — triggers the wallet picker popup if needed.
+      const liveWallet = wallet ?? await connect();
+
       const [
         { createEventTicketProviders },
         { EventTicketAPI, hexToBigint },
@@ -207,7 +204,7 @@ function TicketCard({
         import("@sdk/contract-api"),
         import("@sdk/types"),
       ]);
-      const providers = await createEventTicketProviders(wallet, PREPROD_CONFIG);
+      const providers = await createEventTicketProviders(liveWallet, PREPROD_CONFIG);
       const api = await EventTicketAPI.join(
         providers,
         ticket.secret.contractAddress,
@@ -277,10 +274,9 @@ function TicketCard({
 
           {/* Verify */}
           <div className="space-y-2">
-            {!walletReady && <WalletConnect />}
             <button
               onClick={verify}
-              disabled={verifying || !walletReady}
+              disabled={verifying}
               className="w-full bg-white text-black text-xs font-semibold py-2.5 hover:bg-zinc-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
             >
               {verifying ? "Generating ZK proof…" : "Verify Ticket"}

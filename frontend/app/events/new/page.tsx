@@ -7,7 +7,6 @@ import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQueryClient } from "@tanstack/react-query";
 import { Nav } from "@/components/Nav";
-import { WalletConnect } from "@/components/WalletConnect";
 import { EventPlaceholder } from "@/components/EventPlaceholder";
 import type { LocationResult } from "@/components/LocationPickerMap";
 import { useWallet } from "@/contexts/WalletContext";
@@ -369,22 +368,16 @@ function Step1({
 // ─── Step 2 — Review & Deploy ─────────────────────────────────────────────────
 
 function ReviewStep({
-  form, progress, loading, error, isReady, sessionOnly,
-  onBack, onDeploy, onDismissError, onConnect,
+  form, progress, loading, error,
+  onBack, onDeploy, onDismissError,
 }: {
   form: FormState;
   progress: ProgressStep[];
   loading: boolean;
   error: string | null;
-  /** True when wallet !== null — the live WalletConnectedAPI is available. */
-  isReady: boolean;
-  /** True when status==='connected' but wallet===null (session restored, no live wallet). */
-  sessionOnly: boolean;
   onBack: () => void;
   onDeploy: () => void;
   onDismissError: () => void;
-  /** Triggers the wallet connect flow. */
-  onConnect: () => void;
 }) {
   const fmt = (d: string, t: string) =>
     d && t
@@ -439,40 +432,23 @@ function ReviewStep({
         ))}
       </div>
 
-      {!isReady && (
-        <div className="space-y-3">
-          <div className="flex items-center gap-2">
-            <div className="h-px flex-1 bg-white/6" />
-            <span className="text-[10px] font-mono text-zinc-700">wallet required</span>
-            <div className="h-px flex-1 bg-white/6" />
-          </div>
-          {sessionOnly ? (
-            // Session was restored from the backend but the live wallet
-            // object is absent — the user must reconnect the extension.
-            <div className="border border-amber-500/20 bg-amber-500/[0.03] px-4 py-4">
-              <p className="text-sm font-semibold text-amber-400 mb-1">Wallet reconnect needed</p>
-              <p className="text-xs text-zinc-500 leading-relaxed mb-3">
-                Your session is active but the wallet extension is not connected
-                in this tab. Click below to re-connect.
-              </p>
-              <button type="button" onClick={onConnect}
-                className="flex items-center gap-2 border border-white/15 hover:border-white/30
-                  bg-white/[0.04] hover:bg-white/[0.08] text-white text-sm px-4 py-2.5
-                  transition-all duration-150 cursor-pointer">
-                <svg className="w-4 h-4 text-zinc-400" viewBox="0 0 24 24" fill="none"
-                  stroke="currentColor" strokeWidth="1.5">
-                  <path strokeLinecap="round" strokeLinejoin="round"
-                    d="M12 2L4 6v6c0 4.42 3.36 8.56 8 9.56C17.64 20.56 21 16.42 21 12V6l-9-4z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4" />
-                </svg>
-                Connect Wallet
-              </button>
-            </div>
-          ) : (
-            <WalletConnect />
-          )}
+      {loading ? (
+        <div className="w-full flex items-center justify-center gap-2.5 bg-white/[0.05] border border-white/8 text-zinc-500 text-sm py-3.5 cursor-not-allowed select-none">
+          <Spinner size={13} />
+          <span>Deploying — do not close the tab</span>
         </div>
-      )}
+      ) : !error ? (
+        <div className="flex gap-3">
+          <button type="button" onClick={onBack} disabled={loading}
+            className="border border-white/8 text-zinc-500 text-sm px-5 py-3 hover:text-white hover:border-white/20 transition-colors disabled:opacity-30">
+            ← Back
+          </button>
+          <button type="button" onClick={onDeploy}
+            className="flex-1 bg-white text-black text-sm font-semibold py-3 hover:bg-zinc-100 transition-colors">
+            Deploy &amp; Create Event
+          </button>
+        </div>
+      ) : null}
 
       <AnimatePresence>
         {progress.length > 0 && (
@@ -503,24 +479,6 @@ function ReviewStep({
           </motion.div>
         )}
       </AnimatePresence>
-
-      {loading ? (
-        <div className="w-full flex items-center justify-center gap-2.5 bg-white/[0.05] border border-white/8 text-zinc-500 text-sm py-3.5 cursor-not-allowed select-none">
-          <Spinner size={13} />
-          <span>Deploying — do not close the tab</span>
-        </div>
-      ) : !error ? (
-        <div className="flex gap-3">
-          <button type="button" onClick={onBack} disabled={loading}
-            className="border border-white/8 text-zinc-500 text-sm px-5 py-3 hover:text-white hover:border-white/20 transition-colors disabled:opacity-30">
-            ← Back
-          </button>
-          <button type="button" onClick={onDeploy} disabled={!isReady}
-            className="flex-1 bg-white text-black text-sm font-semibold py-3 hover:bg-zinc-100 disabled:opacity-25 disabled:cursor-not-allowed transition-colors">
-            Deploy &amp; Create Event
-          </button>
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -713,11 +671,7 @@ export default function NewEventPage() {
   // Forwarded to LocationPickerMap to fly to a country on selection.
   const [mapFlyQuery,  setMapFlyQuery] = useState("");
 
-  // wallet !== null means the live WalletConnectedAPI is present and can sign.
   // authUser !== null means the user is signed in with Google (backend session).
-  // sessionOnly: signed in but wallet not yet connected — user needs to connect wallet.
-  const isReady     = wallet !== null;
-  const sessionOnly = !!authUser && wallet === null;
 
   function onChange(key: keyof FormState) {
     return (e: React.ChangeEvent<HTMLInputElement>) =>
@@ -761,12 +715,14 @@ export default function NewEventPage() {
   }
 
   async function handleDeploy() {
-    if (!isReady) return;
     setLoading(true);
     setError(null);
     setProgress(INITIAL_PROGRESS.map((s) => ({ ...s })));
 
     try {
+      // Connect wallet on-demand — triggers the wallet picker popup if needed.
+      const liveWallet = wallet ?? await connect();
+
       const [{ createEventTicketProviders }, { EventTicketAPI }, { PREPROD_CONFIG }] =
         await Promise.all([
           import("@sdk/providers"),
@@ -774,7 +730,7 @@ export default function NewEventPage() {
           import("@sdk/types"),
         ]);
 
-      const providers = await createEventTicketProviders(wallet, PREPROD_CONFIG);
+      const providers = await createEventTicketProviders(liveWallet, PREPROD_CONFIG);
       const api       = await EventTicketAPI.deploy(providers);
       bumpProgress("deploy", "done", api.contractAddress);
       bumpProgress("circuit", "active");
@@ -937,9 +893,7 @@ export default function NewEventPage() {
                         initial="enter" animate="center" exit="exit">
                         <ReviewStep form={form} progress={progress}
                           loading={loading} error={error}
-                          isReady={isReady} sessionOnly={sessionOnly}
                           onBack={() => goTo(1)} onDeploy={handleDeploy}
-                          onConnect={connect}
                           onDismissError={() => { setError(null); setProgress([]); }} />
                       </motion.div>
                     )}
