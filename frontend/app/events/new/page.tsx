@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import dynamic from "next/dynamic";
@@ -13,6 +13,7 @@ import type { LocationResult } from "@/components/LocationPickerMap";
 import { useWallet } from "@/contexts/WalletContext";
 import { saveEvent, saveCallerSecret } from "@/lib/storage";
 import { api as backendApi } from "@/lib/api";
+import { COUNTRY_NAMES } from "@/lib/countries";
 
 // Map loaded client-side only (Leaflet requires the DOM).
 const LocationPickerMap = dynamic(
@@ -624,32 +625,6 @@ const stepVariants = {
     transition: { duration: 0.18, ease: "easeIn" },
   }),
 };
-
-// ─── Country autocomplete list ────────────────────────────────────────────────
-
-const COUNTRY_NAMES = [
-  "Afghanistan","Albania","Algeria","Andorra","Angola","Argentina","Armenia",
-  "Australia","Austria","Azerbaijan","Bahamas","Bahrain","Bangladesh","Belarus",
-  "Belgium","Belize","Benin","Bolivia","Bosnia and Herzegovina","Botswana",
-  "Brazil","Brunei","Bulgaria","Burkina Faso","Cambodia","Cameroon","Canada",
-  "Chile","China","Colombia","Costa Rica","Croatia","Cuba","Cyprus",
-  "Czech Republic","Denmark","Dominican Republic","Ecuador","Egypt",
-  "El Salvador","Estonia","Ethiopia","Finland","France","Georgia","Germany",
-  "Ghana","Greece","Guatemala","Haiti","Honduras","Hungary","Iceland","India",
-  "Indonesia","Iran","Iraq","Ireland","Israel","Italy","Jamaica","Japan",
-  "Jordan","Kazakhstan","Kenya","Kuwait","Kyrgyzstan","Laos","Latvia",
-  "Lebanon","Libya","Lithuania","Luxembourg","Malaysia","Maldives","Malta",
-  "Mexico","Moldova","Monaco","Mongolia","Montenegro","Morocco","Mozambique",
-  "Myanmar","Namibia","Nepal","Netherlands","New Zealand","Nicaragua",
-  "Nigeria","North Korea","North Macedonia","Norway","Oman","Pakistan",
-  "Panama","Paraguay","Peru","Philippines","Poland","Portugal","Qatar",
-  "Romania","Russia","Rwanda","Saudi Arabia","Senegal","Serbia","Singapore",
-  "Slovakia","Slovenia","Somalia","South Africa","South Korea","South Sudan",
-  "Spain","Sri Lanka","Sudan","Sweden","Switzerland","Syria","Taiwan",
-  "Tajikistan","Tanzania","Thailand","Togo","Tunisia","Turkey","Turkmenistan",
-  "Uganda","Ukraine","United Arab Emirates","United Kingdom","United States",
-  "Uruguay","Uzbekistan","Venezuela","Vietnam","Yemen","Zambia","Zimbabwe",
-];
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 

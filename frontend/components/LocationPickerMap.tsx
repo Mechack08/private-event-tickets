@@ -60,12 +60,20 @@ export default function LocationPickerMap({
   useEffect(() => {
     if (!divRef.current || mapRef.current) return;
 
+    // `cancelled` is set synchronously in the cleanup function so that the
+    // async import().then() callback becomes a no-op when React StrictMode
+    // unmounts the component before the import resolves (which would otherwise
+    // cause "Map container is already initialized" on the second mount).
+    let cancelled = false;
+
     import("leaflet").then((mod) => {
+      if (cancelled || !divRef.current || mapRef.current) return;
+
       /* ---- Leaflet default icon fix for webpack ---- */
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const Lf = (mod as any).default as typeof L;
 
-      const map = Lf.map(divRef.current!, {
+      const map = Lf.map(divRef.current, {
         center: [initialLat, initialLng],
         zoom: 12,
         zoomControl: true,
@@ -142,6 +150,7 @@ export default function LocationPickerMap({
     });
 
     return () => {
+      cancelled = true;
       if (mapRef.current) {
         mapRef.current.remove();
         mapRef.current = null;
