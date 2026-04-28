@@ -12,16 +12,10 @@ import {
   getEvent,
   getCallerSecret,
   saveCallerSecret,
-  getEventRequests,
-  addRequest,
-  updateRequest,
-  getMyRequestId,
-  setMyRequestId,
   saveTicket,
   type StoredEvent,
-  type TicketRequest,
 } from "@/lib/storage";
-import { api as backendApi } from "@/lib/api";
+import { api as backendApi, type RequestRecord } from "@/lib/api";
 
 // EventLocationMap loaded client-side only (Leaflet requires the DOM).
 const EventLocationMap = dynamic(
@@ -419,7 +413,7 @@ function OrganizerView({
 }) {
   const { wallet, connect } = useWallet();
   const [tab, setTab] = useState<OrganizerTab>("requests");
-  const [requests, setRequests] = useState<TicketRequest[]>([]);
+  const [requests, setRequests] = useState<RequestRecord[]>([]);
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [directSecret, setDirectSecret] = useState<{
     contractAddress: string;
@@ -432,15 +426,19 @@ function OrganizerView({
   const [statusError, setStatusError] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
-    setRequests(getEventRequests(address));
+    backendApi.requests.byEvent(address)
+      .then(setRequests)
+      .catch((err: unknown) => {
+        console.warn("Failed to load requests:", err);
+      });
   }, [address]);
 
   useEffect(() => {
     refresh();
   }, [refresh]);
 
-  const pendingCount = requests.filter((r) => r.status === "pending").length;
-  const approvedCount = requests.filter((r) => r.status === "approved").length;
+  const pendingCount = requests.filter((r) => r.status === "PENDING").length;
+  const approvedCount = requests.filter((r) => r.status === "APPROVED").length;
 
   async function buildApi() {
     // Connect wallet on-demand — triggers the wallet picker popup if needed.
@@ -477,29 +475,33 @@ function OrganizerView({
     }
   }
 
-  async function approveRequest(req: TicketRequest) {
+  async function approveRequest(req: RequestRecord) {
     setProcessingId(req.id);
     setIssueError(null);
     try {
       const contractApi = await buildApi();
       const { nonce } = await contractApi.issueTicket();
       const { bigintToHex } = await import("@sdk/contract-api");
-      const secret = contractApi.ticketSecret(nonce);
-      updateRequest(address, req.id, {
-        status: "approved",
-        secret,
-        processedAt: new Date().toISOString(),
-      });
+      const nonceHex = bigintToHex(nonce);
 
-      // Sync to backend (non-fatal)
+      // Store the nonce on the backend so the attendee can retrieve it
+      await backendApi.requests.update(req.id, { status: "APPROVED", ticketNonce: nonceHex });
+
+      // Also register the ticket commitment on backend (non-fatal)
       try {
         const event = await backendApi.events.byAddress(address);
-        await backendApi.tickets.issue({ commitment: bigintToHex(nonce), eventId: event.id });
+        await backendApi.tickets.issue({ commitment: nonceHex, eventId: event.id });
       } catch {
         console.warn("Backend ticket sync failed — continuing.");
       }
 
-      refresh();
+      setRequests((prev) =>
+        prev.map((r) =>
+          r.id === req.id
+            ? { ...r, status: "APPROVED" as const, processedAt: new Date().toISOString() }
+            : r,
+        ),
+      );
     } catch (err) {
       setIssueError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -507,14 +509,22 @@ function OrganizerView({
     }
   }
 
-  async function rejectRequest(req: TicketRequest) {
+  async function rejectRequest(req: RequestRecord) {
     setProcessingId(req.id);
-    updateRequest(address, req.id, {
-      status: "rejected",
-      processedAt: new Date().toISOString(),
-    });
-    refresh();
-    setProcessingId(null);
+    try {
+      await backendApi.requests.update(req.id, { status: "REJECTED" });
+      setRequests((prev) =>
+        prev.map((r) =>
+          r.id === req.id
+            ? { ...r, status: "REJECTED" as const, processedAt: new Date().toISOString() }
+            : r,
+        ),
+      );
+    } catch (err) {
+      setIssueError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setProcessingId(null);
+    }
   }
 
   async function issueDirectly() {
@@ -683,7 +693,7 @@ function OrganizerView({
             </p>
           </div>
           {requests
-            .filter((r) => r.status === "approved")
+            .filter((r) => r.status === "APPROVED")
             .map((r) => (
               <div
                 key={r.id}
@@ -753,38 +763,61 @@ function AttendeeView({
   address: string;
   eventName?: string;
 }) {
+  const { user } = useAuth();
   const [name, setName] = useState("");
   const [note, setNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [myReq, setMyReq] = useState<TicketRequest | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [myReq, setMyReq] = useState<RequestRecord | null>(null);
+  const [loadingReq, setLoadingReq] = useState(true);
   const [savedTicket, setSavedTicket] = useState(false);
 
-  // Check if we already have a request for this event on this browser.
+  // Check for an existing request on mount (requires auth)
   useEffect(() => {
-    const id = getMyRequestId(address);
-    if (id) {
-      const req = getEventRequests(address).find((r) => r.id === id);
-      if (req) setMyReq(req);
+    if (!user) {
+      setLoadingReq(false);
+      return;
     }
-  }, [address]);
+    backendApi.requests.mine(address)
+      .then((req) => setMyReq(req))
+      .catch(() => {})
+      .finally(() => setLoadingReq(false));
+  }, [address, user]);
 
-  function submitRequest(e: React.FormEvent) {
+  // Auto-poll every 8 s while the request is still PENDING
+  useEffect(() => {
+    if (!user || !myReq || myReq.status !== "PENDING") return;
+    const interval = setInterval(() => {
+      backendApi.requests.mine(address)
+        .then((req) => { if (req) setMyReq(req); })
+        .catch(() => {});
+    }, 8000);
+    return () => clearInterval(interval);
+  }, [address, user, myReq]);
+
+  async function submitRequest(e: React.FormEvent) {
     e.preventDefault();
+    if (!user) return;
     setSubmitting(true);
-    const id = crypto.randomUUID();
-    const req: TicketRequest = {
-      id,
-      contractAddress: address,
-      eventName: eventName ?? address,
-      requesterName: name.trim(),
-      note: note.trim(),
-      status: "pending",
-      requestedAt: new Date().toISOString(),
-    };
-    addRequest(req);
-    setMyRequestId(address, id);
-    setMyReq(req);
-    setSubmitting(false);
+    setSubmitError(null);
+    try {
+      const req = await backendApi.requests.create({
+        contractAddress: address,
+        requesterName: name.trim(),
+        note: note.trim() || undefined,
+      });
+      setMyReq(req);
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function refreshStatus() {
+    if (!user) return;
+    const req = await backendApi.requests.mine(address).catch(() => null);
+    if (req) setMyReq(req);
   }
 
   function claimTicket(secret: { contractAddress: string; nonce: string }) {
@@ -798,14 +831,31 @@ function AttendeeView({
     setSavedTicket(true);
   }
 
-  // Refresh request status from storage
-  function refreshStatus() {
-    if (!myReq) return;
-    const req = getEventRequests(address).find((r) => r.id === myReq.id);
-    if (req) setMyReq(req);
+  // Not logged in — can't request
+  if (!user) {
+    return (
+      <div className="rounded-xl border border-white/8 bg-white/3 px-5 py-6 text-center space-y-3">
+        <p className="text-sm font-medium text-white">Sign in to request a ticket</p>
+        <p className="text-xs text-zinc-500">
+          Connect with Google using the button in the top-right corner to submit a request.
+        </p>
+      </div>
+    );
+  }
+
+  if (loadingReq) {
+    return (
+      <div className="space-y-3">
+        <div className="h-24 rounded-xl bg-white/3 animate-pulse" />
+      </div>
+    );
   }
 
   if (myReq) {
+    const ticketSecret = myReq.status === "APPROVED" && myReq.ticketNonce
+      ? { contractAddress: address, nonce: myReq.ticketNonce }
+      : null;
+
     return (
       <div>
         <div className="mb-6 rounded-xl border border-white/8 bg-white/3 px-5 py-5">
@@ -822,7 +872,7 @@ function AttendeeView({
           <p className="text-xs text-zinc-600 mt-2">
             {new Date(myReq.requestedAt).toLocaleString()}
           </p>
-          {myReq.status === "pending" && (
+          {myReq.status === "PENDING" && (
             <button
               onClick={refreshStatus}
               className="mt-4 text-xs text-zinc-500 hover:text-white transition-colors underline underline-offset-4"
@@ -832,14 +882,14 @@ function AttendeeView({
           )}
         </div>
 
-        {myReq.status === "approved" && myReq.secret && !savedTicket && (
+        {ticketSecret && !savedTicket && (
           <div className="space-y-4">
             <SecretBox
-              secret={myReq.secret}
+              secret={ticketSecret}
               label="Your ticket secret — save it, this is your proof of ownership"
             />
             <button
-              onClick={() => claimTicket(myReq.secret!)}
+              onClick={() => claimTicket(ticketSecret)}
               className="w-full bg-white text-black text-sm font-medium py-3 rounded-xl hover:bg-zinc-100 transition-colors"
             >
               Save to My Tickets
@@ -865,7 +915,7 @@ function AttendeeView({
           </div>
         )}
 
-        {myReq.status === "rejected" && (
+        {myReq.status === "REJECTED" && (
           <div className="rounded-xl border border-red-500/20 bg-red-500/6 px-4 py-4">
             <p className="text-sm text-red-400">
               Your ticket request was not accepted.
@@ -949,20 +999,12 @@ function RequestCard({
   onApprove,
   onReject,
 }: {
-  req: TicketRequest;
+  req: RequestRecord;
   processingId: string | null;
-  onApprove: (r: TicketRequest) => void;
-  onReject: (r: TicketRequest) => void;
+  onApprove: (r: RequestRecord) => void;
+  onReject: (r: RequestRecord) => void;
 }) {
-  const [copiedSecret, setCopiedSecret] = useState(false);
   const busy = processingId === req.id;
-
-  function copySecret() {
-    if (!req.secret) return;
-    navigator.clipboard.writeText(JSON.stringify(req.secret, null, 2));
-    setCopiedSecret(true);
-    setTimeout(() => setCopiedSecret(false), 2000);
-  }
 
   return (
     <div className="rounded-xl border border-white/8 bg-white/3 px-5 py-4">
@@ -981,7 +1023,7 @@ function RequestCard({
         <StatusPill status={req.status} />
       </div>
 
-      {req.status === "pending" && (
+      {req.status === "PENDING" && (
         <div className="flex gap-2 mt-3">
           <button
             onClick={() => onApprove(req)}
@@ -1000,40 +1042,29 @@ function RequestCard({
         </div>
       )}
 
-      {req.status === "approved" && req.secret && (
-        <div className="mt-3 rounded-lg border border-white/6 bg-white/3 px-3 py-3">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-xs text-zinc-400">Ticket secret</p>
-            <button
-              onClick={copySecret}
-              className="text-xs text-zinc-600 hover:text-white transition-colors"
-            >
-              {copiedSecret ? "Copied!" : "Copy"}
-            </button>
-          </div>
-          <pre className="text-xs font-mono text-zinc-500 whitespace-pre-wrap break-all">
-            {JSON.stringify(req.secret, null, 2)}
-          </pre>
-          <p className="text-xs text-zinc-600 mt-2">
-            Send this to {req.requesterName} privately.
-          </p>
-        </div>
+      {req.status === "APPROVED" && (
+        <p className="mt-3 text-xs text-emerald-400/80">
+          Ticket secret delivered — attendee can collect it on their device.
+        </p>
       )}
     </div>
   );
 }
 
-function StatusPill({ status }: { status: TicketRequest["status"] }) {
-  const styles = {
-    pending: "border-yellow-500/20 text-yellow-400",
-    approved: "border-emerald-500/20 text-emerald-400",
-    rejected: "border-red-500/20 text-red-400",
+function StatusPill({ status }: { status: RequestRecord["status"] }) {
+  const styles: Record<RequestRecord["status"], string> = {
+    PENDING:  "border-yellow-500/20 text-yellow-400",
+    APPROVED: "border-emerald-500/20 text-emerald-400",
+    REJECTED: "border-red-500/20 text-red-400",
+  };
+  const labels: Record<RequestRecord["status"], string> = {
+    PENDING: "Pending",
+    APPROVED: "Approved",
+    REJECTED: "Rejected",
   };
   return (
-    <span
-      className={`shrink-0 text-xs border px-2 py-0.5 rounded-full ${styles[status]}`}
-    >
-      {status.charAt(0).toUpperCase() + status.slice(1)}
+    <span className={`shrink-0 text-xs border px-2 py-0.5 rounded-full ${styles[status]}`}>
+      {labels[status]}
     </span>
   );
 }

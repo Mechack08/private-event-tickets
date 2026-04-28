@@ -101,6 +101,37 @@ export const api = {
         body: JSON.stringify(data),
       }),
   },
+
+  requests: {
+    /** Submit a ticket request for an event. */
+    create: (data: CreateRequestInput) =>
+      request<RequestRecord>("/requests", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+
+    /** Get the calling user's own request for an event (null if none). */
+    mine: (contractAddress: string) =>
+      request<RequestRecord | null>(
+        `/requests/mine/${encodeURIComponent(contractAddress)}`,
+      ).catch((err: ApiError) => {
+        if (err.status === 404) return null;
+        throw err;
+      }),
+
+    /** List all requests for an event (organizer only). */
+    byEvent: (contractAddress: string) =>
+      request<RequestRecord[]>(
+        `/requests/event/${encodeURIComponent(contractAddress)}`,
+      ),
+
+    /** Approve or reject a request. Supply ticketNonce on approval. */
+    update: (id: string, data: UpdateRequestInput) =>
+      request<RequestRecord>(`/requests/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      }),
+  },
 } as const;
 
 // ── API types (mirror backend Prisma models) ──────────────────────────────────
@@ -161,4 +192,30 @@ export interface IssueTicketInput {
 export interface VerifyTicketInput {
   commitment: string;
   eventId: string;
+}
+
+export type RequestStatus = "PENDING" | "APPROVED" | "REJECTED";
+
+export interface RequestRecord {
+  id: string;
+  requesterName: string;
+  note: string | null;
+  status: RequestStatus;
+  /** Only present (non-null) on your own APPROVED request. */
+  ticketNonce: string | null;
+  requestedAt: string;
+  processedAt: string | null;
+  requesterId: string;
+  eventId: string;
+}
+
+export interface CreateRequestInput {
+  contractAddress: string;
+  requesterName: string;
+  note?: string;
+}
+
+export interface UpdateRequestInput {
+  status: "APPROVED" | "REJECTED";
+  ticketNonce?: string;
 }

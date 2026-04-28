@@ -34,6 +34,23 @@ interface ServerToClientEvents {
   }) => void;
   /** Emitted when event metadata is updated */
   "event:created": (payload: { eventId: string }) => void;
+  /** Emitted when a new ticket request is submitted */
+  "request:new": (payload: {
+    requestId: string;
+    eventId: string;
+    contractAddress: string;
+    requesterName: string;
+    note: string;
+    requestedAt: string;
+  }) => void;
+  /** Emitted when a ticket request is approved or rejected */
+  "request:updated": (payload: {
+    requestId: string;
+    eventId: string;
+    contractAddress: string;
+    status: "PENDING" | "APPROVED" | "REJECTED";
+    processedAt: string;
+  }) => void;
   /** Generic error acknowledgment */
   error: (message: string) => void;
 }

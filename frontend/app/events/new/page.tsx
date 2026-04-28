@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import { motion, AnimatePresence, useMotionValue, useTransform, animate } from "framer-motion";
+import { motion, AnimatePresence, animate } from "framer-motion";
 import { useQueryClient } from "@tanstack/react-query";
 import { Nav } from "@/components/Nav";
 import { EventPlaceholder } from "@/components/EventPlaceholder";
@@ -436,13 +436,16 @@ const STEP_META: Record<string, { icon: string; tagline: string; color: string }
 };
 
 function useCountUp(target: number, duration: number) {
-  const mv = useMotionValue(0);
-  const rounded = useTransform(mv, Math.round);
+  const [value, setValue] = useState(0);
   useEffect(() => {
-    const ctrl = animate(mv, target, { duration, ease: "easeOut" });
+    const ctrl = animate(0, target, {
+      duration,
+      ease: "easeOut",
+      onUpdate: (v) => setValue(Math.round(v)),
+    });
     return ctrl.stop;
-  }, [target, duration, mv]);
-  return rounded;
+  }, [target, duration]);
+  return value;
 }
 
 /** Animated floating particle for the background. */
