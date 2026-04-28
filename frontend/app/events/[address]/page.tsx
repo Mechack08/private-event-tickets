@@ -875,7 +875,7 @@ function AttendeeView({
             <p className="text-xs text-zinc-500 mt-1 italic">&ldquo;{myReq.note}&rdquo;</p>
           )}
           <p className="text-xs text-zinc-600 mt-2">
-            {new Date(myReq.requestedAt).toLocaleString()}
+            {new Date(myReq.createdAt).toLocaleString()}
           </p>
           {myReq.status === "PENDING" && (
             <button
@@ -1024,7 +1024,7 @@ function RequestCard({
             </p>
           )}
           <p className="text-xs text-zinc-600 mt-1">
-            {new Date(req.requestedAt).toLocaleString()}
+            {new Date(req.createdAt).toLocaleString()}
           </p>
         </div>
         <StatusPill status={req.status} />

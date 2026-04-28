@@ -203,7 +203,7 @@ export interface RequestRecord {
   status: RequestStatus;
   /** Only present (non-null) on your own APPROVED request. */
   ticketNonce: string | null;
-  requestedAt: string;
+  createdAt: string;
   processedAt: string | null;
   requesterId: string;
   eventId: string;
