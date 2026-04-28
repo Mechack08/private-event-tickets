@@ -71,15 +71,22 @@ type ConnectedWallet = Awaited<ReturnType<WalletState["connect"]>>;
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-/** Estimated DUST cost of contract deploy + createEvent ZK transaction. */
+/**
+ * 1 DUST = 1,000,000 raw units (6 decimal places — Cardano/Midnight convention).
+ * getDustBalance() always returns raw units.
+ */
+const DUST_SCALE = 1_000_000n;
+
+/** Estimated raw-unit cost of contract deploy + createEvent ZK transaction (~0.5 DUST). */
 const DEPLOY_COST_ESTIMATE = 500_000n;
 
-function formatDust(n: bigint): string {
-  if (n >= 1_000_000n)
-    return (Number(n) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 2 }) + "M";
-  if (n >= 1_000n)
-    return (Number(n) / 1_000).toLocaleString(undefined, { maximumFractionDigits: 1 }) + "K";
-  return n.toString();
+/** Convert raw DUST units to a human-readable string (e.g. 1_500_000_000_000n → "1.5B"). */
+function formatDust(rawN: bigint): string {
+  const d = Number(rawN) / Number(DUST_SCALE); // value in DUST (float)
+  if (d >= 1e9)  return (d / 1e9).toLocaleString(undefined, { maximumFractionDigits: 2 }) + "B";
+  if (d >= 1e6)  return (d / 1e6).toLocaleString(undefined, { maximumFractionDigits: 2 }) + "M";
+  if (d >= 1e3)  return (d / 1e3).toLocaleString(undefined, { maximumFractionDigits: 1 }) + "K";
+  return d.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
 const WIZARD_STEPS = [
