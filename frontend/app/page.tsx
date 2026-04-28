@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRef } from "react";
 import { motion, useInView } from "framer-motion";
 import { Nav } from "@/components/Nav";
-import { useWallet } from "@/contexts/WalletContext";
+import { useAuth } from "@/contexts/AuthContext";
 
 // ─── Animation presets ──────────────────────────────────────────────────────
 const fadeUp = {
@@ -230,8 +230,8 @@ function FlowStep({
 
 // ─── Page ───────────────────────────────────────────────────────────────────
 export default function HomePage() {
-  const { status } = useWallet();
-  const connected = status === "connected";
+  const { user } = useAuth();
+  const connected = user !== null;
 
   return (
     <>
@@ -311,7 +311,7 @@ export default function HomePage() {
                     Browse Events →
                   </Link>
                   <p className="w-full text-xs text-zinc-600 mt-1">
-                    Connect a Midnight wallet to create events or buy tickets.
+                    Sign in with Google to create events and manage tickets.
                   </p>
                 </>
               )}
@@ -487,7 +487,7 @@ export default function HomePage() {
                 <p className="text-xs text-zinc-500 uppercase tracking-widest font-medium mb-4">Get started</p>
                 <h2 className="text-2xl font-bold text-white mb-3 tracking-tight">Ready to run privacy-first events?</h2>
                 <p className="text-sm text-zinc-400 max-w-sm mx-auto mb-8">
-                  Connect a Midnight-compatible wallet to create events, buy tickets, and manage your attendees.
+                  Sign in with Google to create events, manage tickets, and explore the platform.
                 </p>
                 <Link
                   href="/events"

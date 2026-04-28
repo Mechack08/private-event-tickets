@@ -5,7 +5,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Nav } from "@/components/Nav";
-import { WalletConnect } from "@/components/WalletConnect";
 import { useAuth } from "@/contexts/AuthContext";
 import { api, type EventRecord } from "@/lib/api";
 import { getMyEvents, type StoredEvent } from "@/lib/storage";
@@ -125,13 +124,6 @@ export default function EventsPage() {
             )}
           </div>
 
-          {/* Wallet gate banner */}
-          {!connected && (
-            <div className="mb-6">
-              <WalletConnect />
-            </div>
-          )}
-
           {/* Lookup by contract address */}
           <form onSubmit={handleLookup} className="flex gap-2 mb-8">
             <input
@@ -169,7 +161,7 @@ export default function EventsPage() {
                   Create your first event →
                 </Link>
               ) : (
-                <p className="mt-3 text-xs text-zinc-700">Connect a wallet to create events.</p>
+                <p className="mt-3 text-xs text-zinc-700">Sign in to create events.</p>
               )}
             </div>
           ) : (
