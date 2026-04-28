@@ -70,28 +70,30 @@ export default function EventDetailPage() {
     backendApi.events.byAddress(address)
       .then((backendEvent) => {
         setOrgCheckError(null);
+        // Always populate event data so every visitor (guest or organizer) sees
+        // the full EventHero with name, dates, location, description, etc.
+        setEvent({
+          contractAddress: backendEvent.contractAddress,
+          eventName:       backendEvent.name,
+          totalTickets:    backendEvent.maxCapacity ?? 0,
+          txId:            "",
+          createdAt:       backendEvent.createdAt,
+          callerSecretHex: "",
+          description:     backendEvent.description ?? "",
+          location:        backendEvent.location ?? "",
+          country:         backendEvent.country ?? undefined,
+          city:            backendEvent.city ?? undefined,
+          latitude:        backendEvent.latitude ?? undefined,
+          longitude:       backendEvent.longitude ?? undefined,
+          startDate:       backendEvent.startDate ?? new Date().toISOString(),
+          endDate:         backendEvent.endDate ?? new Date().toISOString(),
+        });
         if (user && backendEvent.hostId === user.userId) {
           // Authenticated user is the host — check if their ZK key is already here.
-          setEvent({
-            contractAddress: backendEvent.contractAddress,
-            eventName:       backendEvent.name,
-            totalTickets:    backendEvent.maxCapacity ?? 0,
-            txId:            "",
-            createdAt:       backendEvent.createdAt,
-            callerSecretHex: "",
-            description:     backendEvent.description ?? "",
-            location:        backendEvent.location ?? "",
-            country:         backendEvent.country ?? undefined,
-            city:            backendEvent.city ?? undefined,
-            latitude:        backendEvent.latitude ?? undefined,
-            longitude:       backendEvent.longitude ?? undefined,
-            startDate:       backendEvent.startDate ?? new Date().toISOString(),
-            endDate:         backendEvent.endDate ?? new Date().toISOString(),
-          });
           setIsOrganizer(true);
           setHasLocalKey(!!getCallerSecret(address));
         }
-        // else: event found but user is not the host — attendee view (no error)
+        // else: guest view — event data is set above, no organizer flags
       })
       .catch((err: unknown) => {
         const status = (err as { status?: number }).status;
