@@ -10,7 +10,7 @@ import { Nav } from "@/components/Nav";
 import { EventPlaceholder } from "@/components/EventPlaceholder";
 import type { LocationResult } from "@/components/LocationPickerMap";
 import { useWallet } from "@/contexts/WalletContext";
-import type { AvailableWallet } from "@/hooks/useWallet";
+import type { AvailableWallet, WalletState } from "@/hooks/useWallet";
 import { useAuth } from "@/contexts/AuthContext";
 import { saveEvent, saveCallerSecret } from "@/lib/storage";
 import { api as backendApi } from "@/lib/api";
@@ -56,7 +56,31 @@ interface DeploySuccess {
   backendSyncFailed?: boolean;
 }
 
+interface PreflightState {
+  phase:       "connecting" | "ready" | "error";
+  walletName:  string;
+  walletIcon?: string;
+  dustBalance: bigint | null;
+  dustCap:     bigint | null;
+  dustAddress: string | null;
+  error:       string | null;
+}
+
+/** Connected wallet type — avoids importing dapp-connector-api directly in the page. */
+type ConnectedWallet = Awaited<ReturnType<WalletState["connect"]>>;
+
 // ─── Constants ────────────────────────────────────────────────────────────────
+
+/** Estimated DUST cost of contract deploy + createEvent ZK transaction. */
+const DEPLOY_COST_ESTIMATE = 500_000n;
+
+function formatDust(n: bigint): string {
+  if (n >= 1_000_000n)
+    return (Number(n) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 2 }) + "M";
+  if (n >= 1_000n)
+    return (Number(n) / 1_000).toLocaleString(undefined, { maximumFractionDigits: 1 }) + "K";
+  return n.toString();
+}
 
 const WIZARD_STEPS = [
   { label: "Core",    sub: "on-chain"  },
@@ -98,6 +122,193 @@ const inputCls =
   "w-full bg-white/[0.03] border border-white/8 px-4 py-3 text-sm text-white " +
   "placeholder-zinc-700 focus:outline-none focus:border-white/25 " +
   "disabled:opacity-40 transition-colors rounded-none";
+
+// ─── Wallet pre-flight modal ─────────────────────────────────────────────────
+// Shown after wallet selection: connects the wallet, fetches DUST balance,
+// and asks the user to confirm before starting the (slow) deploy flow.
+
+function WalletPreflightModal({
+  state, onConfirm, onCancel,
+}: {
+  state: PreflightState;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const hasBalance  = state.dustBalance !== null;
+  const sufficient  = !hasBalance || state.dustBalance! >= DEPLOY_COST_ESTIMATE;
+  // Bar fills to 100% when balance = 3× estimated cost.
+  const pct = hasBalance
+    ? Math.min(100, Number((state.dustBalance! * 100n) / (DEPLOY_COST_ESTIMATE * 3n)))
+    : 0;
+  const barColor = pct > 66 ? "bg-emerald-500" : pct > 33 ? "bg-amber-500" : "bg-red-500";
+  const truncAddr = state.dustAddress
+    ? state.dustAddress.slice(0, 14) + "…" + state.dustAddress.slice(-8)
+    : null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">
+      <div className="w-full max-w-sm border border-white/10 bg-[#0d0d0d] overflow-hidden">
+
+        {/* Header */}
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-white/8">
+          {state.walletIcon ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={state.walletIcon} alt="" className="w-9 h-9 shrink-0 rounded-lg" />
+          ) : (
+            <div className="w-9 h-9 shrink-0 border border-white/10 bg-white/[0.04] flex items-center justify-center">
+              <svg className="w-4.5 h-4.5 text-zinc-500" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a2.25 2.25 0 00-2.25-2.25H15a3 3 0 11-6 0H5.25A2.25 2.25 0 003 12m18 0v6a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 18v-6" />
+              </svg>
+            </div>
+          )}
+          <div className="flex-1 min-w-0">
+            <p className="text-[9px] font-mono font-semibold text-zinc-700 uppercase tracking-widest">Wallet</p>
+            <p className="text-sm font-semibold text-white truncate">{state.walletName}</p>
+          </div>
+          {state.phase === "connecting" && (
+            <span className="shrink-0 flex items-center gap-1.5 text-[10px] font-mono text-zinc-500">
+              <Spinner size={11} /> Connecting
+            </span>
+          )}
+          {state.phase === "ready" && (
+            <span className="shrink-0 flex items-center gap-1.5 text-[10px] font-mono text-emerald-400 border border-emerald-500/20 bg-emerald-500/[0.04] px-2 py-0.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" /> Connected
+            </span>
+          )}
+          {state.phase === "error" && (
+            <span className="shrink-0 text-[10px] font-mono text-red-400">Failed</span>
+          )}
+        </div>
+
+        <div className="px-5 py-5">
+          {/* ── Connecting phase ── */}
+          {state.phase === "connecting" && (
+            <div className="py-6 text-center space-y-4">
+              <div className="inline-flex w-14 h-14 border border-white/8 bg-white/[0.02] items-center justify-center mx-auto">
+                <Spinner size={22} />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-zinc-200 mb-1">Awaiting wallet approval</p>
+                <p className="text-xs text-zinc-600 leading-relaxed">
+                  The wallet extension popup may be waiting behind this window. Check your browser toolbar.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* ── Error phase ── */}
+          {state.phase === "error" && (
+            <div className="py-2 flex items-start gap-3 border border-red-500/20 bg-red-500/[0.04] px-4 py-3">
+              <svg className="w-4 h-4 text-red-400 mt-0.5 shrink-0" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+              </svg>
+              <p className="text-xs text-zinc-400 leading-relaxed">{state.error}</p>
+            </div>
+          )}
+
+          {/* ── Ready phase ── */}
+          {state.phase === "ready" && (
+            <div className="space-y-4">
+
+              {/* Shielded address */}
+              {truncAddr && (
+                <div>
+                  <p className="text-[9px] font-mono font-semibold text-zinc-700 uppercase tracking-widest mb-1.5">Shielded address</p>
+                  <p className="text-[11px] font-mono text-zinc-400 bg-white/[0.03] border border-white/6 px-3 py-2 truncate">
+                    {truncAddr}
+                  </p>
+                </div>
+              )}
+
+              {/* DUST balance */}
+              <div>
+                <div className="flex items-baseline justify-between mb-1.5">
+                  <p className="text-[9px] font-mono font-semibold text-zinc-700 uppercase tracking-widest">DUST Balance</p>
+                  {hasBalance ? (
+                    <p className="text-sm font-bold text-white tabular-nums">
+                      {formatDust(state.dustBalance!)}
+                      <span className="text-[10px] font-mono text-zinc-600 ml-1">DUST</span>
+                    </p>
+                  ) : (
+                    <p className="text-xs text-zinc-600">unavailable</p>
+                  )}
+                </div>
+                {/* Gauge */}
+                <div className="h-1 bg-white/[0.04] border border-white/6 mb-1 overflow-hidden">
+                  <div
+                    className={`h-full transition-all duration-700 ease-out ${barColor}`}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+                {state.dustCap !== null && (
+                  <p className="text-[9px] font-mono text-zinc-800">Cap: {formatDust(state.dustCap!)} DUST</p>
+                )}
+              </div>
+
+              {/* Cost / status row */}
+              <div className="border border-white/6 bg-white/[0.015] divide-y divide-white/6">
+                <div className="flex items-center justify-between px-4 py-2.5">
+                  <p className="text-xs text-zinc-500">Estimated deploy cost</p>
+                  <p className="text-xs font-mono text-zinc-400">~{formatDust(DEPLOY_COST_ESTIMATE)} DUST</p>
+                </div>
+                <div className="flex items-center justify-between px-4 py-2.5">
+                  <p className="text-xs text-zinc-500">Status</p>
+                  {!hasBalance ? (
+                    <span className="text-[10px] font-mono text-zinc-600">—</span>
+                  ) : sufficient ? (
+                    <span className="flex items-center gap-1 text-[10px] font-mono text-emerald-400">
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                      Sufficient
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1 text-[10px] font-mono text-amber-400">
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+                      </svg>
+                      Low balance
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {!sufficient && hasBalance && (
+                <p className="flex items-start gap-2 text-[11px] text-amber-300/60 bg-amber-500/[0.04] border border-amber-500/15 px-3 py-2.5 leading-relaxed">
+                  <svg className="w-3.5 h-3.5 mt-0.5 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+                  </svg>
+                  Balance may be too low. The transaction might fail. Earn more DUST from NIGHT staking before proceeding.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex gap-2 px-5 pb-5">
+          {state.phase === "ready" && (
+            <button
+              onClick={onConfirm}
+              className="flex-1 bg-white text-black text-sm font-semibold py-3 hover:bg-zinc-100 transition-colors"
+            >
+              Deploy Contract →
+            </button>
+          )}
+          <button
+            onClick={onCancel}
+            className={[
+              "text-sm text-zinc-500 hover:text-white border border-white/8 hover:border-white/20 py-3 transition-colors",
+              state.phase === "ready" ? "px-5" : "flex-1",
+            ].join(" ")}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ─── Wallet picker modal ─────────────────────────────────────────────────────
 
@@ -734,6 +945,58 @@ export default function NewEventPage() {
     walletPickerResolveRef.current = null;
   }
 
+  // Wallet pre-flight — connects wallet, fetches balance, waits for user confirmation.
+  const [preflight, setPreflight] = useState<PreflightState | null>(null);
+  const preflightWalletRef = useRef<ConnectedWallet | null>(null);
+  const preflightResolveRef = useRef<((w: ConnectedWallet | null) => void) | null>(null);
+
+  function launchPreflight(
+    walletKey: string,
+    walletName: string,
+    walletIcon?: string,
+  ): Promise<ConnectedWallet | null> {
+    return new Promise((resolve) => {
+      preflightResolveRef.current = resolve;
+      setPreflight({ phase: "connecting", walletName, walletIcon, dustBalance: null, dustCap: null, dustAddress: null, error: null });
+
+      // Fire-and-forget: connect in the background while the modal is open.
+      connect(walletKey)
+        .then(async (connected) => {
+          preflightWalletRef.current = connected;
+          try {
+            const [{ balance, cap }, { shieldedAddress }] = await Promise.all([
+              connected.getDustBalance(),
+              connected.getShieldedAddresses(),
+            ]);
+            setPreflight((p) => p ? { ...p, phase: "ready", dustBalance: balance, dustCap: cap, dustAddress: shieldedAddress } : null);
+          } catch {
+            // Balance unavailable — still allow deploy
+            setPreflight((p) => p ? { ...p, phase: "ready" } : null);
+          }
+        })
+        .catch((err: unknown) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          preflightWalletRef.current = null;
+          setPreflight((p) => p ? { ...p, phase: "error", error: msg } : null);
+        });
+    });
+  }
+
+  function onPreflightConfirm() {
+    const w = preflightWalletRef.current;
+    preflightWalletRef.current = null;
+    setPreflight(null);
+    preflightResolveRef.current?.(w);
+    preflightResolveRef.current = null;
+  }
+
+  function onPreflightCancel() {
+    preflightWalletRef.current = null;
+    setPreflight(null);
+    preflightResolveRef.current?.(null);
+    preflightResolveRef.current = null;
+  }
+
   // authUser !== null means the user is signed in with Google (backend session).
 
   function onChange(key: keyof FormState) {
@@ -778,9 +1041,9 @@ export default function NewEventPage() {
   }
 
   async function handleDeploy() {
-    // ── Step 0: wallet selection (before any loading state) ───────────────────
-    let walletKeyHint: string | undefined;
-    if (!wallet) {
+    // ── Step 1: detect + pick wallet ──────────────────────────────────────────
+    let liveWallet: ConnectedWallet | null = wallet;
+    if (!liveWallet) {
       type MW = { name?: string; icon?: string };
       const midnightObj = (window as unknown as { midnight?: Record<string, MW> }).midnight;
       if (!midnightObj || Object.keys(midnightObj).length === 0) {
@@ -790,18 +1053,27 @@ export default function NewEventPage() {
         return;
       }
       const keys = Object.keys(midnightObj);
+      let walletKey: string;
       if (keys.length > 1) {
-        const choices = keys.map((k) => ({
+        const choices: AvailableWallet[] = keys.map((k) => ({
           key: k,
           name: midnightObj[k]!.name || k.replace(/^mn/i, "").replace(/([a-z])([A-Z])/g, "$1 $2"),
           icon: midnightObj[k]!.icon,
         }));
         const chosen = await requestWalletPick(choices);
-        if (!chosen) return; // user cancelled
-        walletKeyHint = chosen;
+        if (!chosen) return;
+        walletKey = chosen;
       } else {
-        walletKeyHint = keys[0];
+        walletKey = keys[0]!;
       }
+      const meta = midnightObj[walletKey]!;
+      // ── Step 2: pre-flight (connects wallet + fetches DUST balance) ───────
+      liveWallet = await launchPreflight(
+        walletKey,
+        meta.name || walletKey.replace(/^mn/i, "").replace(/([a-z])([A-Z])/g, "$1 $2"),
+        meta.icon,
+      );
+      if (!liveWallet) return; // user cancelled
     }
 
     setLoading(true);
@@ -809,9 +1081,7 @@ export default function NewEventPage() {
     setProgress(INITIAL_PROGRESS.map((s) => ({ ...s })));
 
     try {
-      // Connect wallet — uses the key the user picked (or the only available one).
-      const liveWallet = wallet ?? await connect(walletKeyHint);
-
+      // liveWallet already connected via preflight (or re-used from context).
       const [{ createEventTicketProviders }, { EventTicketAPI }, { PREPROD_CONFIG }] =
         await Promise.all([
           import("@sdk/providers"),
@@ -819,7 +1089,7 @@ export default function NewEventPage() {
           import("@sdk/types"),
         ]);
 
-      const providers = await createEventTicketProviders(liveWallet, PREPROD_CONFIG);
+      const providers = await createEventTicketProviders(liveWallet!, PREPROD_CONFIG);
       const api       = await EventTicketAPI.deploy(providers);
       bumpProgress("deploy", "done", api.contractAddress);
       bumpProgress("circuit", "active");
@@ -953,6 +1223,15 @@ export default function NewEventPage() {
                 wallets={walletChoices}
                 onPick={(key) => onWalletChosen(key)}
                 onCancel={() => onWalletChosen(null)}
+              />
+            )}
+
+            {/* ── Wallet pre-flight overlay ──────────────────────────── */}
+            {preflight && (
+              <WalletPreflightModal
+                state={preflight}
+                onConfirm={onPreflightConfirm}
+                onCancel={onPreflightCancel}
               />
             )}
 
