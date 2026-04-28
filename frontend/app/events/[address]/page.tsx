@@ -212,9 +212,11 @@ function EventHero({
   const longDesc = desc.length > 260;
   const location = [event?.city, event?.country].filter(Boolean).join(", ") || event?.location;
   const statRows: { label: string; date: Date | null }[] = [
-    { label: "OPENS",  date: start },
-    { label: "CLOSES", date: end   },
+    { label: "STARTS", date: start },
+    { label: "ENDS",   date: end   },
   ];
+
+  const sameDay = start && end && start.toDateString() === end.toDateString();
 
   return (
     <div>
@@ -296,27 +298,50 @@ function EventHero({
         </div>
       )}
 
-      {/* Ticket-stub stats: OPENS | CLOSES | CAPACITY */}
+      {/* Ticket-stub stats: STARTS | ENDS | CAPACITY  (same-day: DATE | TIME | CAPACITY) */}
       {event && (
         <div className="grid grid-cols-3 border border-white/8 divide-x divide-white/8 mb-5">
-          {statRows.map(({ label, date }) => {
-            const d = date ? fmtBig(date) : null;
-            return (
-              <div key={label} className="px-4 py-4">
-                <p className="text-[9px] font-mono font-semibold text-zinc-700 tracking-widest mb-2">{label}</p>
-                {d ? (
+          {sameDay && start && end ? (
+            <>
+              {/* Same-day event: one DATE cell + one TIME RANGE cell */}
+              <div className="px-4 py-4">
+                <p className="text-[9px] font-mono font-semibold text-zinc-700 tracking-widest mb-2">DATE</p>
+                {(() => { const d = fmtBig(start); return (
                   <>
                     <p className="text-2xl font-black text-white tabular-nums leading-none">{d.day}</p>
                     <p className="text-xs font-mono text-zinc-400 mt-1">{d.month} {d.year}</p>
                     <p className="text-[10px] font-mono text-zinc-700 mt-0.5">{d.dow}</p>
-                    <p className="text-[11px] font-mono text-zinc-400 mt-1.5 tabular-nums">{d.time}</p>
                   </>
-                ) : (
-                  <p className="text-zinc-700 text-sm">—</p>
-                )}
+                ); })()}
               </div>
-            );
-          })}
+              <div className="px-4 py-4">
+                <p className="text-[9px] font-mono font-semibold text-zinc-700 tracking-widest mb-2">TIME</p>
+                <p className="text-lg font-black text-white tabular-nums leading-none">{fmtBig(start).time}</p>
+                <p className="text-[10px] font-mono text-zinc-600 mt-1">START</p>
+                <p className="text-lg font-black text-white tabular-nums leading-none mt-2">{fmtBig(end).time}</p>
+                <p className="text-[10px] font-mono text-zinc-600 mt-1">END</p>
+              </div>
+            </>
+          ) : (
+            statRows.map(({ label, date }) => {
+              const d = date ? fmtBig(date) : null;
+              return (
+                <div key={label} className="px-4 py-4">
+                  <p className="text-[9px] font-mono font-semibold text-zinc-700 tracking-widest mb-2">{label}</p>
+                  {d ? (
+                    <>
+                      <p className="text-2xl font-black text-white tabular-nums leading-none">{d.day}</p>
+                      <p className="text-xs font-mono text-zinc-400 mt-1">{d.month} {d.year}</p>
+                      <p className="text-[10px] font-mono text-zinc-700 mt-0.5">{d.dow}</p>
+                      <p className="text-[11px] font-mono text-zinc-400 mt-1.5 tabular-nums">{d.time}</p>
+                    </>
+                  ) : (
+                    <p className="text-zinc-700 text-sm">—</p>
+                  )}
+                </div>
+              );
+            })
+          )}
           <div className="px-4 py-4">
             <p className="text-[9px] font-mono font-semibold text-zinc-700 tracking-widest mb-2">CAPACITY</p>
             <p className="text-2xl font-black text-white tabular-nums leading-none">{event.totalTickets}</p>
