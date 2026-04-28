@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { Nav } from "@/components/Nav";
 import { EventPlaceholder } from "@/components/EventPlaceholder";
 import { useWallet } from "@/contexts/WalletContext";
@@ -21,6 +22,12 @@ import {
   type TicketRequest,
 } from "@/lib/storage";
 import { api as backendApi } from "@/lib/api";
+
+// EventLocationMap loaded client-side only (Leaflet requires the DOM).
+const EventLocationMap = dynamic(
+  () => import("@/components/EventLocationMap"),
+  { ssr: false, loading: () => <div className="w-full h-full bg-white/[0.02] animate-pulse" /> }
+);
 
 type OrganizerTab = "requests" | "attendees" | "issue";
 type EventStatus = "active" | "paused" | "cancelled";
@@ -295,6 +302,42 @@ function EventHero({
               {expanded ? "Show less ↑" : "Show more ↓"}
             </button>
           )}
+        </div>
+      )}
+
+      {/* Location map — shown when lat/lng are known */}
+      {event?.latitude != null && event?.longitude != null && (
+        <div className="mb-6 border border-white/8 overflow-hidden">
+          {/* Map */}
+          <div style={{ height: 240 }}>
+            <EventLocationMap
+              lat={event.latitude}
+              lng={event.longitude}
+              label={location ?? event.eventName}
+            />
+          </div>
+          {/* Footer bar */}
+          <div className="flex items-center justify-between gap-4 bg-white/[0.025] border-t border-white/6 px-4 py-2.5">
+            <p className="text-[11px] font-mono text-zinc-500 truncate flex-1">
+              {location || `${event.latitude.toFixed(5)}, ${event.longitude.toFixed(5)}`}
+            </p>
+            <div className="flex items-center gap-2 shrink-0">
+              <a
+                href={`https://www.openstreetmap.org/?mlat=${event.latitude}&mlon=${event.longitude}&zoom=15`}
+                target="_blank" rel="noopener noreferrer"
+                className="text-[10px] font-mono text-zinc-600 hover:text-white border border-white/8 hover:border-white/20 px-2.5 py-1 transition-colors"
+              >
+                OSM ↗
+              </a>
+              <a
+                href={`https://www.google.com/maps/dir/?api=1&destination=${event.latitude},${event.longitude}`}
+                target="_blank" rel="noopener noreferrer"
+                className="text-[10px] font-mono text-zinc-600 hover:text-white border border-white/8 hover:border-white/20 px-2.5 py-1 transition-colors"
+              >
+                Directions ↗
+              </a>
+            </div>
+          </div>
         </div>
       )}
 
