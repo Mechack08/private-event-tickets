@@ -205,7 +205,7 @@ function TicketCard({
         import("@sdk/types"),
       ]);
       const providers = await createEventTicketProviders(liveWallet, PREPROD_CONFIG);
-      const api = await EventTicketAPI.join(
+      const api = await EventTicketAPI.joinAsAttendee(
         providers,
         ticket.secret.contractAddress,
       );

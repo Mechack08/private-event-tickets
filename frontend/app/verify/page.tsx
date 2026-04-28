@@ -61,7 +61,7 @@ export default function VerifyPage() {
       ]);
 
       const providers = await createEventTicketProviders(liveWallet, PREPROD_CONFIG);
-      const contractApi = await EventTicketAPI.join(providers, secret.contractAddress);
+      const contractApi = await EventTicketAPI.joinAsAttendee(providers, secret.contractAddress);
       const { verified: ok, txId: id } = await contractApi.verifyTicket(
         hexToBigint(secret.nonce),
       );
