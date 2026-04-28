@@ -198,7 +198,9 @@ function nameToAccent(name: string): string {
 }
 
 function fmtShort(d: Date) {
-  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  const date = d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  const time = d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  return `${date}, ${time}`;
 }
 
 function EventCard({ event }: { event: EventRecord }) {

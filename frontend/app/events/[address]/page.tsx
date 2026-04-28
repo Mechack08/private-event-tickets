@@ -186,7 +186,9 @@ function EventHero({
   const end   = event?.endDate   ? new Date(event.endDate)   : null;
 
   function fmtDate(d: Date) {
-    return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+    const date = d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+    const time = d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+    return `${date}, ${time}`;
   }
 
   function fmtBig(d: Date) {
@@ -195,6 +197,7 @@ function EventHero({
       month: d.toLocaleDateString("en-GB", { month: "short" }).toUpperCase(),
       year:  d.getFullYear(),
       dow:   d.toLocaleDateString("en-GB", { weekday: "short" }).toUpperCase(),
+      time:  d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }),
     };
   }
 
@@ -306,6 +309,7 @@ function EventHero({
                     <p className="text-2xl font-black text-white tabular-nums leading-none">{d.day}</p>
                     <p className="text-xs font-mono text-zinc-400 mt-1">{d.month} {d.year}</p>
                     <p className="text-[10px] font-mono text-zinc-700 mt-0.5">{d.dow}</p>
+                    <p className="text-[11px] font-mono text-zinc-400 mt-1.5 tabular-nums">{d.time}</p>
                   </>
                 ) : (
                   <p className="text-zinc-700 text-sm">—</p>
