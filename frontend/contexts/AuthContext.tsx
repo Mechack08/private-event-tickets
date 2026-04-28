@@ -13,6 +13,8 @@ import { api, type BackendUser } from "@/lib/api";
 interface AuthContextValue {
   /** Null when not signed in; populated after Google sign-in. */
   user: BackendUser | null;
+  /** True while the initial session-restore call is in flight. */
+  loading: boolean;
   /** Exchange a Google ID token credential for a backend session. */
   signIn: (credential: string) => Promise<void>;
   /** Destroy the backend session and clear local auth state. */
@@ -23,10 +25,14 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<BackendUser | null>(null);
+  const [loading, setLoading] = useState(true);
 
   // Restore session on mount (page refresh).
   useEffect(() => {
-    api.auth.me().then(setUser).catch(() => { /* no session — fine */ });
+    api.auth.me()
+      .then(setUser)
+      .catch(() => { /* no session — fine */ })
+      .finally(() => setLoading(false));
   }, []);
 
   const signIn = useCallback(async (credential: string) => {
@@ -40,7 +46,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, signIn, signOut }}>
+    <AuthContext.Provider value={{ user, loading, signIn, signOut }}>
       {children}
     </AuthContext.Provider>
   );
