@@ -189,23 +189,62 @@ export default function EventsPage() {
   );
 }
 
+// Deterministic accent colour — uses the same djb2 seed as EventPlaceholder so
+// the 2px top line on every card matches that event's generative poster palette.
+function nameToAccent(name: string): string {
+  let h = 5381;
+  for (let i = 0; i < name.length; i++) h = (((h << 5) + h) ^ name.charCodeAt(i)) >>> 0;
+  return `hsl(${h % 360},${62 + (h % 22)}%,62%)`;
+}
+
+function fmtShort(d: Date) {
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
+
 function EventCard({ event }: { event: EventRecord }) {
+  const accent = nameToAccent(event.name);
+  const start = event.startDate ? new Date(event.startDate) : null;
+  const end   = event.endDate   ? new Date(event.endDate)   : null;
+  const location = [event.city, event.country].filter(Boolean).join(", ") || event.location;
+
   return (
     <Link
       href={`/events/${encodeURIComponent(event.contractAddress)}`}
-      className="flex items-center justify-between gap-4 border border-white/8 bg-white/[0.02] hover:bg-white/[0.04] px-5 py-4 transition-colors group"
+      className="group block border border-white/8 bg-white/[0.02] hover:bg-white/[0.04] transition-colors overflow-hidden"
     >
-      <div className="min-w-0">
-        <p className="text-sm font-semibold text-white truncate">{event.name}</p>
-        <p className="text-xs text-zinc-600 font-mono mt-1 truncate">
-          {event.contractAddress}
-        </p>
-      </div>
-      <div className="text-right shrink-0">
-        <p className="text-xs text-zinc-400 tabular-nums">{event.maxCapacity ?? "—"} cap</p>
-        <p className="text-xs text-zinc-600 mt-0.5">
-          {new Date(event.createdAt).toLocaleDateString()}
-        </p>
+      {/* Accent line — same hue as the event's generative poster */}
+      <div className="h-[2px]" style={{ background: accent }} />
+      <div className="px-5 py-4">
+        <div className="flex items-start justify-between gap-3 mb-2.5">
+          <p className="text-sm font-semibold text-white leading-snug group-hover:text-zinc-100 transition-colors">
+            {event.name}
+          </p>
+          <svg className="w-3.5 h-3.5 text-zinc-700 group-hover:text-zinc-400 shrink-0 mt-0.5 transition-colors" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
+          </svg>
+        </div>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mb-2.5">
+          {location && (
+            <span className="flex items-center gap-1 text-xs text-zinc-500">
+              <svg className="w-3 h-3 shrink-0" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1 1 15 0Z" />
+              </svg>
+              {location}
+            </span>
+          )}
+          {start && (
+            <span className="flex items-center gap-1 text-xs text-zinc-500">
+              <svg className="w-3 h-3 shrink-0" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5" />
+              </svg>
+              {fmtShort(start)}{end && end.toDateString() !== start.toDateString() ? ` – ${fmtShort(end)}` : ""}
+            </span>
+          )}
+          {event.maxCapacity != null && (
+            <span className="text-xs text-zinc-600 tabular-nums">{event.maxCapacity} seats</span>
+          )}
+        </div>
+        <p className="text-[10px] font-mono text-zinc-700 truncate">{event.contractAddress}</p>
       </div>
     </Link>
   );
@@ -215,6 +254,10 @@ function LocalEventCard({ event, connected }: { event: StoredEvent; connected: b
   const queryClient = useQueryClient();
   const [syncState, setSyncState] = useState<"idle" | "syncing" | "done" | "error">("idle");
   const [syncError, setSyncError] = useState<string | null>(null);
+  const accent = nameToAccent(event.eventName);
+  const start = event.startDate ? new Date(event.startDate) : null;
+  const end   = event.endDate   ? new Date(event.endDate)   : null;
+  const location = [event.city, event.country].filter(Boolean).join(", ") || event.location;
 
   async function handleSync(e: React.MouseEvent) {
     e.preventDefault();
@@ -233,35 +276,41 @@ function LocalEventCard({ event, connected }: { event: StoredEvent; connected: b
   }
 
   return (
-    <div className="border border-white/8 border-dashed bg-white/[0.015]">
-      <div className="flex items-center gap-3 px-5 py-4">
-        {/* Clickable event info area */}
+    <div className="border border-white/8 border-dashed bg-white/[0.015] overflow-hidden">
+      <div className="h-[2px]" style={{ background: accent + "80" }} />
+      <div className="flex items-start gap-3 px-5 py-4">
         <Link
           href={`/events/${encodeURIComponent(event.contractAddress)}`}
-          className="flex-1 min-w-0 flex items-center justify-between gap-4 group"
+          className="flex-1 min-w-0 group"
         >
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <p className="text-sm font-semibold text-white truncate group-hover:text-zinc-200 transition-colors">
-                {event.eventName}
-              </p>
-              <span className="text-[10px] font-mono text-yellow-600 border border-yellow-600/30 px-1.5 py-0.5 shrink-0">
-                local
+          <div className="flex items-center gap-2 mb-2">
+            <p className="text-sm font-semibold text-white truncate group-hover:text-zinc-100 transition-colors">
+              {event.eventName}
+            </p>
+            <span className="shrink-0 text-[9px] font-mono font-bold text-yellow-600 border border-yellow-600/30 px-1.5 py-0.5 leading-none">
+              LOCAL
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mb-2">
+            {location && (
+              <span className="flex items-center gap-1 text-xs text-zinc-500">
+                <svg className="w-3 h-3 shrink-0" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1 1 15 0Z" />
+                </svg>
+                {location}
               </span>
-            </div>
-            <p className="text-xs text-zinc-600 font-mono mt-1 truncate">
-              {event.contractAddress}
-            </p>
+            )}
+            {start && (
+              <span className="flex items-center gap-1 text-xs text-zinc-500">
+                <svg className="w-3 h-3 shrink-0" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5" />
+                </svg>
+                {fmtShort(start)}{end && end.toDateString() !== start.toDateString() ? ` – ${fmtShort(end)}` : ""}
+              </span>
+            )}
           </div>
-          <div className="text-right shrink-0">
-            <p className="text-xs text-zinc-400 tabular-nums">{event.totalTickets} cap</p>
-            <p className="text-xs text-zinc-600 mt-0.5">
-              {new Date(event.createdAt).toLocaleDateString()}
-            </p>
-          </div>
+          <p className="text-[10px] font-mono text-zinc-700 truncate">{event.contractAddress}</p>
         </Link>
-
-        {/* Sync action — only visible when wallet is connected */}
         {connected && (
           <button
             onClick={handleSync}
@@ -300,12 +349,8 @@ function LocalEventCard({ event, connected }: { event: StoredEvent; connected: b
           </button>
         )}
       </div>
-
-      {/* Inline error detail */}
       {syncState === "error" && syncError && (
-        <p className="px-5 pb-3 text-[11px] text-red-400/70 font-mono truncate">
-          {syncError}
-        </p>
+        <p className="px-5 pb-3 text-[11px] text-red-400/70 font-mono truncate">{syncError}</p>
       )}
     </div>
   );

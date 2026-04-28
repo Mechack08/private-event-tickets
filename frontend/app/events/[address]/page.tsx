@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { Nav } from "@/components/Nav";
+import { EventPlaceholder } from "@/components/EventPlaceholder";
 import { useWallet } from "@/contexts/WalletContext";
 import { useAuth } from "@/contexts/AuthContext";
 import {
@@ -130,38 +131,8 @@ export default function EventDetailPage() {
     <>
       <Nav />
       <main className="min-h-dvh bg-[#0a0a0a] pt-14">
-        <div className="mx-auto max-w-2xl px-5 pt-12 pb-24">
-          {/* Breadcrumb */}
-          <div className="flex items-center gap-2 text-xs text-zinc-600 mb-8">
-            <Link href="/events" className="hover:text-white transition-colors">
-              Events
-            </Link>
-            <span>/</span>
-            <span className="text-zinc-400 truncate max-w-[180px] font-mono">
-              {address}
-            </span>
-          </div>
-
-          {/* Event header */}
-          <div className="mb-8">
-            <div className="flex items-start justify-between gap-4 mb-2">
-              <h1 className="text-2xl font-bold text-white tracking-tight">
-                {event?.eventName ?? "Event"}
-              </h1>
-              {isOrganizer && (
-                <span className="shrink-0 text-xs border border-white/15 text-zinc-400 px-2 py-0.5 rounded-full mt-1">
-                  Organizer
-                </span>
-              )}
-            </div>
-            <p className="text-xs font-mono text-zinc-600 break-all">{address}</p>
-            {event && (
-              <p className="text-xs text-zinc-500 mt-2">
-                {event.totalTickets} tickets total ·{" "}
-                {new Date(event.createdAt).toLocaleDateString()}
-              </p>
-            )}
-          </div>
+        <div className="mx-auto max-w-2xl px-5 pt-6 pb-24">
+          <EventHero address={address} event={event} isOrganizer={isOrganizer} />
 
           {isOrganizer && !hasLocalKey ? (
             <OrganizerKeyImport
@@ -192,6 +163,174 @@ export default function EventDetailPage() {
         </div>
       </main>
     </>
+  );
+}
+
+// ─── Event hero ──────────────────────────────────────────────────────────────
+
+function EventHero({
+  address,
+  event,
+  isOrganizer,
+}: {
+  address: string;
+  event: StoredEvent | null;
+  isOrganizer: boolean;
+}) {
+  const [copied, setCopied] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+
+  const start = event?.startDate ? new Date(event.startDate) : null;
+  const end   = event?.endDate   ? new Date(event.endDate)   : null;
+
+  function fmtDate(d: Date) {
+    return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  }
+
+  function fmtBig(d: Date) {
+    return {
+      day:   d.toLocaleDateString("en-GB", { day: "2-digit" }),
+      month: d.toLocaleDateString("en-GB", { month: "short" }).toUpperCase(),
+      year:  d.getFullYear(),
+      dow:   d.toLocaleDateString("en-GB", { weekday: "short" }).toUpperCase(),
+    };
+  }
+
+  function copyAddress() {
+    navigator.clipboard.writeText(address).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
+
+  const desc = event?.description?.trim() ?? "";
+  const longDesc = desc.length > 260;
+  const location = [event?.city, event?.country].filter(Boolean).join(", ") || event?.location;
+  const statRows: { label: string; date: Date | null }[] = [
+    { label: "OPENS",  date: start },
+    { label: "CLOSES", date: end   },
+  ];
+
+  return (
+    <div>
+      {/* Breadcrumb */}
+      <div className="flex items-center gap-2 text-xs text-zinc-600 mb-5">
+        <Link href="/events" className="hover:text-white transition-colors">Events</Link>
+        <span>/</span>
+        <span className="font-mono text-zinc-500 truncate max-w-[200px]">
+          {address.length > 24 ? address.slice(0, 24) + "…" : address}
+        </span>
+      </div>
+
+      {/* Generative poster — clipped to fixed height to act as event banner */}
+      <div className="relative overflow-hidden mb-6 border border-white/6" style={{ height: "200px" }}>
+        <EventPlaceholder name={event?.eventName ?? address} />
+        {/* Smooth bottom fade into page background */}
+        <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-[#0a0a0a] to-transparent pointer-events-none" />
+        <div className="absolute top-3 right-3">
+          <span className="text-[9px] font-mono font-bold uppercase tracking-widest text-white/45 border border-white/10 bg-black/50 px-2 py-1">
+            ZK·MIDNIGHT
+          </span>
+        </div>
+        {isOrganizer && (
+          <div className="absolute top-3 left-3">
+            <span className="text-[9px] font-mono font-bold uppercase tracking-widest text-emerald-400/80 border border-emerald-500/25 bg-black/50 px-2 py-1">
+              ✦ Organizer
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* Name */}
+      <h1 className="text-[28px] font-black text-white tracking-tight leading-tight mb-3">
+        {event?.eventName
+          ? event.eventName
+          : <span className="text-zinc-600 text-xl font-mono">{address.slice(0, 20)}…</span>}
+      </h1>
+
+      {/* Location + date inline */}
+      {(location || start) && (
+        <div className="flex flex-wrap gap-x-5 gap-y-1.5 mb-5">
+          {location && (
+            <span className="flex items-center gap-1.5 text-sm text-zinc-400">
+              <svg className="w-3.5 h-3.5 text-zinc-600 shrink-0" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1 1 15 0Z" />
+              </svg>
+              {location}
+            </span>
+          )}
+          {start && (
+            <span className="flex items-center gap-1.5 text-sm text-zinc-400">
+              <svg className="w-3.5 h-3.5 text-zinc-600 shrink-0" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5" />
+              </svg>
+              {fmtDate(start)}
+              {end && end.toDateString() !== start.toDateString() ? ` → ${fmtDate(end)}` : ""}
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Description */}
+      {desc && (
+        <div className="mb-6">
+          <p className={`text-sm text-zinc-400 leading-relaxed ${
+            !expanded && longDesc ? "line-clamp-3" : ""
+          }`}>
+            {desc}
+          </p>
+          {longDesc && (
+            <button
+              onClick={() => setExpanded(!expanded)}
+              className="text-[11px] text-zinc-600 hover:text-zinc-300 mt-1.5 transition-colors"
+            >
+              {expanded ? "Show less ↑" : "Show more ↓"}
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Ticket-stub stats: OPENS | CLOSES | CAPACITY */}
+      {event && (
+        <div className="grid grid-cols-3 border border-white/8 divide-x divide-white/8 mb-5">
+          {statRows.map(({ label, date }) => {
+            const d = date ? fmtBig(date) : null;
+            return (
+              <div key={label} className="px-4 py-4">
+                <p className="text-[9px] font-mono font-semibold text-zinc-700 tracking-widest mb-2">{label}</p>
+                {d ? (
+                  <>
+                    <p className="text-2xl font-black text-white tabular-nums leading-none">{d.day}</p>
+                    <p className="text-xs font-mono text-zinc-400 mt-1">{d.month} {d.year}</p>
+                    <p className="text-[10px] font-mono text-zinc-700 mt-0.5">{d.dow}</p>
+                  </>
+                ) : (
+                  <p className="text-zinc-700 text-sm">—</p>
+                )}
+              </div>
+            );
+          })}
+          <div className="px-4 py-4">
+            <p className="text-[9px] font-mono font-semibold text-zinc-700 tracking-widest mb-2">CAPACITY</p>
+            <p className="text-2xl font-black text-white tabular-nums leading-none">{event.totalTickets}</p>
+            <p className="text-xs font-mono text-zinc-400 mt-1">SEATS</p>
+          </div>
+        </div>
+      )}
+
+      {/* Contract address */}
+      <div className="flex items-center gap-3 border border-white/6 bg-white/[0.02] px-4 py-3 mb-8">
+        <p className="text-[9px] font-mono font-semibold text-zinc-700 tracking-widest shrink-0 uppercase">Contract</p>
+        <p className="text-[11px] font-mono text-zinc-600 flex-1 truncate">{address}</p>
+        <button
+          onClick={copyAddress}
+          className="shrink-0 text-[11px] text-zinc-600 hover:text-white border border-white/8 hover:border-white/20 px-2.5 py-1 transition-colors"
+        >
+          {copied ? "✓ Copied" : "Copy"}
+        </button>
+      </div>
+    </div>
   );
 }
 
