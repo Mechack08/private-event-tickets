@@ -96,14 +96,11 @@ export function createApp(): { app: Express; sessionMiddleware: SessionMiddlewar
 
   app.use("/auth", authRouter);
   app.use("/events", eventsRouter);
-  // /tickets is mounted in index.ts after the Socket.io server is created
-
-  // ── 404 handler ──────────────────────────────────────────────────────────
-  app.use((_req, res) => {
-    res.status(404).json({ error: "Not found" });
-  });
+  // /tickets and /requests are mounted in index.ts after the Socket.io server is created
+  // The 404 handler is also added there so it runs last.
 
   // ── Centralised error handler ─────────────────────────────────────────────
+  // Note: 404 is NOT added here — it's added in index.ts after all routers.
   app.use(errorHandler);
 
   return { app, sessionMiddleware };

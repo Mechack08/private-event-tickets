@@ -17,9 +17,14 @@ async function main() {
   // Create Socket.io server (shares the HTTP server with Express)
   const io = createSocketServer(httpServer, sessionMiddleware, config.CORS_ORIGINS);
 
-  // Mount the tickets router now that we have the io reference
+  // Mount routers that need the io reference
   app.use("/tickets", createTicketsRouter(io));
   app.use("/requests", createRequestsRouter(io));
+
+  // 404 handler — must come after all routers
+  app.use((_req: import("express").Request, res: import("express").Response) => {
+    res.status(404).json({ error: "Not found" });
+  });
 
   httpServer.listen(config.PORT, () => {
     console.log(

@@ -808,6 +808,11 @@ function AttendeeView({
       });
       setMyReq(req);
     } catch (err) {
+      // 409 = already submitted — just fetch the existing request
+      if ((err as { status?: number }).status === 409) {
+        const existing = await backendApi.requests.mine(address).catch(() => null);
+        if (existing) { setMyReq(existing); return; }
+      }
       setSubmitError(err instanceof Error ? err.message : String(err));
     } finally {
       setSubmitting(false);
@@ -984,6 +989,8 @@ function AttendeeView({
         >
           {submitting ? "Submitting…" : "Request Ticket"}
         </button>
+
+        {submitError && <ErrorBox message={submitError} />}
       </form>
 
       <ShareHint address={address} />
