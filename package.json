@@ -50,7 +50,9 @@
     "proof-server:stop": "docker stop midnight-proof-server 2>/dev/null || echo 'Proof server not running'",
     "proof-server:logs": "docker logs -f midnight-proof-server",
     "proof-server:status": "docker ps --filter name=midnight-proof-server --format 'table {{.Names}}\\t{{.Status}}\\t{{.Ports}}'",
-
+    "// ── TESTS ─────────────────────────────────────────────────────────────────": "",
+    "test": "pnpm --filter @private-event-tickets/tests test",
+    "test:watch": "pnpm --filter @private-event-tickets/tests test:watch",
     "// ── COMBINED ──────────────────────────────────────────────────────": "",
 
     "typecheck": "pnpm -r typecheck",
