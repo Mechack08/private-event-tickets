@@ -14,6 +14,7 @@ Attendees prove they hold a valid ticket using **zero-knowledge proofs** — no 
 - [Quick start](#quick-start)
 - [User walkthrough](#user-walkthrough)
 - [Contract deep-dive](#contract-deep-dive)
+- [Testing](#testing)
 - [Backend API reference](#backend-api-reference)
 - [Security design](#security-design)
 - [Known limitations](#known-limitations)
@@ -245,14 +246,14 @@ export ledger ticket_commitments: Set<Bytes<32>>;  // set of Poseidon(nonce) has
 
 ### Circuits
 
-#### `create_event(organizer_key, name, total)`
-Initialises the event. The guard `organizer == default<Bytes<32>>` ensures it runs only once per deployment. All three params are private circuit inputs but explicitly `disclose()`d — the event metadata is visible on-chain.
+#### `create_event(name, total)`
+Initialises the event. The guard `organizer == default<Bytes<32>>` ensures it runs only once per deployment. The organizer's identity is committed as `persistentHash(caller_secret())` — the raw secret never touches the chain. `name` and `total` are explicitly `disclose()`d so event metadata is visible on-chain.
 
 #### `issue_ticket()`
-Calls the `local_secret()` witness which the TypeScript SDK satisfies with a fresh cryptographically random nonce. The nonce's Poseidon hash is stored in `ticket_commitments` and `disclose()`d so it appears in the public ledger. The raw nonce is returned to the SDK and must be shared with the attendee off-band.
+Uses two witnesses: `caller_secret()` (the organizer or delegate's private scalar) to authorise the call, and `ticket_nonce()` which the TypeScript SDK satisfies with a fresh cryptographically random field element. The nonce's `persistentHash` is stored in `ticket_commitments` and `disclose()`d so it appears on-chain. The raw nonce is returned to the SDK caller and must be shared with the attendee off-band as their ticket secret.
 
 #### `verify_ticket()`
-The attendee's SDK supplies the stored nonce via `local_secret()`. The circuit computes `persistentHash(nonce)` and checks `ticket_commitments.member(commitment)`. Returns a Boolean. The nonce itself is never revealed.
+The attendee's SDK supplies the stored nonce via the `ticket_nonce()` witness. The circuit computes `persistentHash(nonce)` and checks `ticket_commitments.member(commitment)`. Returns a Boolean. The nonce itself is never revealed.
 
 ### Privacy guarantees
 
@@ -262,6 +263,62 @@ The attendee's SDK supplies the stored nonce via `local_secret()`. The circuit c
 | Ticket number hidden | Only the commitment hash is public; which slot matched is not revealed |
 | Proof is unlinkable | Each verification generates a fresh proof; no nullifier is published |
 | Organizer-only issuance | Only the SDK holding the organizer's wallet can satisfy the `issue_ticket` witness |
+
+---
+
+## Testing
+
+The `tests/` workspace package contains a contract simulation test suite that runs in ~1.5 s with no blockchain, no wallet, and no Docker required. Tests use the `@midnight-ntwrk/compact-runtime` WASM simulator directly, calling each circuit with controlled witness values and asserting ledger state after each call.
+
+### Run the tests
+
+```bash
+pnpm test              # run once
+pnpm test:watch        # re-run on file changes
+```
+
+### Test coverage
+
+| Suite | Tests | What is verified |
+|---|---|---|
+| `create_event` | 4 | stores name / total / `is_active`, commits organizer as `persistentHash(caller_secret)`, sets `ticket_price = 0`, rejects double-init |
+| `issue_ticket` | 6 | increments `tickets_issued`, stores nonce commitment, multiple sequential tickets, unauthorized / paused / cancelled / sold-out guards |
+| `verify_ticket` | 3 | known nonce → `true`, unknown nonce → `false`, each ticket verified independently |
+| `pause_event` | 3 | sets `is_active = false`, unauthorized guard, cancelled guard |
+| `resume_event` | 3 | restores `is_active = true`, unauthorized guard, cancelled guard |
+| `cancel_event` | 5 | sets `is_cancelled = true` + `is_active = false`, works from paused state, unauthorized guard, blocks issue/pause/resume/grant after cancel, **idempotent** (calling twice does not throw) |
+| `grant_delegate` | 5 | adds delegate hash to on-chain `Set`, delegate can issue tickets, non-organizer rejected, cancelled guard, multiple independent delegates |
+| **Invariants** | 3 | `ticket_commitments` grows monotonically, nonces are unique, pause → resume cycle restores full issuance capability |
+| **Total** | **32** | |
+
+### How it works
+
+```
+tests/
+  contract/
+    event-tickets.test.ts   ← 32 simulation tests
+  package.json              ← vitest + compact-runtime deps
+  tsconfig.json
+  vitest.config.ts
+```
+
+Key helpers used in the tests:
+
+```typescript
+// Instantiate the contract with fixed witness scalars
+function makeContract(callerSecret: bigint, ticketNonce: bigint): Contract<object>
+
+// Build an un-initialised ChargedState (ledger ground truth)
+function freshState(): ChargedState
+
+// Execute a circuit and return the resulting ChargedState
+function runCircuit(circuitFn, state, ...args): ChargedState
+
+// Compute the same on-chain commitment the contract stores
+function hashScalar(scalar: bigint): Uint8Array  // persistentHash(CompactTypeField, scalar)
+```
+
+A notable contract behaviour documented by the tests: `cancel_event` has no `!is_cancelled` guard — calling it on an already-cancelled event is **idempotent** and does not throw.
 
 ---
 
