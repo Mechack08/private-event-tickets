@@ -3,7 +3,6 @@ import { config } from "./config.js";
 import { createApp } from "./app.js";
 import { createSocketServer } from "./socket.js";
 import { createTicketsRouter } from "./routes/tickets.js";
-import { createRequestsRouter } from "./routes/requests.js";
 import { prisma } from "./lib/prisma.js";
 
 async function main() {
@@ -19,7 +18,6 @@ async function main() {
 
   // Mount routers that need the io reference
   app.use("/tickets", createTicketsRouter(io));
-  app.use("/requests", createRequestsRouter(io));
 
   // 404 handler — must come after all routers
   app.use((_req: import("express").Request, res: import("express").Response) => {

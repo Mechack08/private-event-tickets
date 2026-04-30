@@ -14,7 +14,7 @@ export interface CreateEventInput {
   startDate: Date;
   endDate: Date;
   maxCapacity: number;
-  ticketPrice?: bigint;
+  minAge?: number;
 }
 
 export async function createEvent(
@@ -46,7 +46,7 @@ export async function createEvent(
         startDate:   input.startDate,
         endDate:     input.endDate,
         maxCapacity: input.maxCapacity,
-        ...(input.ticketPrice !== undefined ? { ticketPrice: input.ticketPrice } : {}),
+        ...(input.minAge !== undefined ? { minAge: input.minAge } : {}),
       },
     });
   }
@@ -54,7 +54,7 @@ export async function createEvent(
   return prisma.event.create({
     data: {
       ...input,
-      ticketPrice: input.ticketPrice ?? BigInt(0),
+      minAge: input.minAge ?? 0,
       hostId,
     },
   });

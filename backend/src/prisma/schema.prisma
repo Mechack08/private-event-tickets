@@ -25,7 +25,6 @@ model User {
 
   hostedEvents    Event[]          @relation("HostedBy")
   tickets         Ticket[]
-  ticketRequests  TicketRequest[]
 
   @@index([googleId])
   @@index([shieldedAddress])
@@ -50,7 +49,7 @@ model Event {
   startDate       DateTime
   endDate         DateTime
   maxCapacity     Int
-  ticketPrice     BigInt      @default(0)   // in tDUST (smallest unit)
+  minAge          Int         @default(0)      // minimum attendee age (0 = no restriction)
   isActive        Boolean     @default(true)
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
@@ -59,7 +58,6 @@ model Event {
   host            User        @relation("HostedBy", fields: [hostId], references: [id], onDelete: Cascade)
 
   tickets         Ticket[]
-  ticketRequests  TicketRequest[]
 
   @@index([contractAddress])
   @@index([hostId])
@@ -89,41 +87,4 @@ model Ticket {
   @@index([eventId])
   @@index([attendeeId])
   @@index([commitment])
-}
-
-// ── TicketRequest ─────────────────────────────────────────────────────────────
-// A request from an attendee to receive a ticket for an event.
-// The organizer approves or rejects; on approval the ZK ticketNonce is stored
-// so the attendee can retrieve and claim their ticket secret.
-//
-// NOTE: ticketNonce is stored server-side for the demo. In a production system
-// you would deliver it via an E2E-encrypted channel.
-
-enum TicketRequestStatus {
-  PENDING
-  APPROVED
-  REJECTED
-}
-
-model TicketRequest {
-  id            String              @id @default(uuid()) @db.Uuid
-  requesterName String              @db.VarChar(80)
-  note          String?             @db.Text
-  status        TicketRequestStatus @default(PENDING)
-  /// Hex-encoded ZK nonce — set by the organizer on approval.
-  /// Only returned to the attendee who owns this request.
-  ticketNonce   String?             @db.VarChar(128)
-  processedAt   DateTime?
-  createdAt     DateTime            @default(now())
-  updatedAt     DateTime            @updatedAt
-
-  requesterId   String              @db.Uuid
-  requester     User                @relation(fields: [requesterId], references: [id], onDelete: Cascade)
-
-  eventId       String              @db.Uuid
-  event         Event               @relation(fields: [eventId], references: [id], onDelete: Cascade)
-
-  @@index([eventId])
-  @@index([requesterId])
-  @@index([eventId, status])
 }

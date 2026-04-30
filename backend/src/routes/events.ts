@@ -11,11 +11,6 @@ import {
 
 const router = Router();
 
-// BigInt (ticketPrice) cannot be JSON-serialised natively; convert to string.
-function serializeEvent<T extends { ticketPrice?: bigint | null }>(ev: T) {
-  return { ...ev, ticketPrice: ev.ticketPrice?.toString() ?? null };
-}
-
 const createEventSchema = z.object({
   contractAddress: z.string().min(10).max(200),
   name: z.string().min(1).max(200),
@@ -28,7 +23,7 @@ const createEventSchema = z.object({
   startDate: z.string().datetime(),
   endDate: z.string().datetime(),
   maxCapacity: z.number().int().min(1).max(100000),
-  ticketPrice: z.number().int().nonnegative().optional(),
+  minAge: z.number().int().min(0).max(120).default(0),
 });
 
 const updateEventSchema = z.object({
@@ -54,7 +49,7 @@ router.get("/", async (req, res, next) => {
   try {
     const activeOnly = req.query["all"] !== "true";
     const events = await listEvents(activeOnly);
-    res.json(events.map(serializeEvent));
+    res.json(events);
   } catch (err) {
     next(err);
   }
@@ -68,7 +63,7 @@ router.get("/by-address/:contractAddress", async (req, res, next) => {
   try {
     const event = await getEventByAddress(req.params["contractAddress"]!);
     if (!event) throw createError("Event not found.", 404);
-    res.json(serializeEvent(event));
+    res.json(event);
   } catch (err) {
     next(err);
   }
@@ -88,15 +83,14 @@ router.post("/", requireAuth, async (req, res, next) => {
       throw createError(`${issue.message}${field}`, 422);
     }
 
-    const { ticketPrice, startDate, endDate, ...rest } = parsed.data;
+    const { startDate, endDate, ...rest } = parsed.data;
     const event = await createEvent(req.session.userId!, {
       ...rest,
       startDate: new Date(startDate),
       endDate: new Date(endDate),
-      ticketPrice: ticketPrice !== undefined ? BigInt(ticketPrice) : undefined,
     });
 
-    res.status(201).json(serializeEvent(event));
+    res.status(201).json(event);
   } catch (err) {
     next(err);
   }
@@ -119,7 +113,7 @@ router.patch("/:id", requireAuth, async (req, res, next) => {
       ...(startDate ? { startDate: new Date(startDate) } : {}),
       ...(endDate   ? { endDate:   new Date(endDate)   } : {}),
     });
-    res.json(serializeEvent(event));
+    res.json(event);
   } catch (err) {
     next(err);
   }
