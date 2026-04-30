@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import dynamic from "next/dynamic";
+import QRCode from "react-qr-code";
 import { Nav } from "@/components/Nav";
 import { EventPlaceholder } from "@/components/EventPlaceholder";
 import { useWallet } from "@/contexts/WalletContext";
@@ -13,9 +14,10 @@ import {
   getCallerSecret,
   saveCallerSecret,
   saveTicket,
+  getMyTickets,
   type StoredEvent,
 } from "@/lib/storage";
-import { api as backendApi, type RequestRecord } from "@/lib/api";
+import { api as backendApi } from "@/lib/api";
 
 // EventLocationMap loaded client-side only (Leaflet requires the DOM).
 const EventLocationMap = dynamic(
@@ -23,7 +25,6 @@ const EventLocationMap = dynamic(
   { ssr: false, loading: () => <div className="w-full h-full bg-white/[0.02] animate-pulse" /> }
 );
 
-type OrganizerTab = "requests" | "attendees" | "issue";
 type EventStatus = "active" | "paused" | "cancelled";
 
 // ─── Main page ────────────────────────────────────────────────────────────────
@@ -161,7 +162,7 @@ export default function EventDetailPage() {
               </button>
             </div>
           ) : (
-            <AttendeeView address={address} eventName={event?.eventName} />
+            <AttendeeView address={address} event={event} />
           )}
         </div>
       </main>
@@ -412,36 +413,16 @@ function OrganizerView({
   event: StoredEvent;
 }) {
   const { wallet, connect } = useWallet();
-  const [tab, setTab] = useState<OrganizerTab>("requests");
-  const [requests, setRequests] = useState<RequestRecord[]>([]);
-  const [processingId, setProcessingId] = useState<string | null>(null);
-  const [directSecret, setDirectSecret] = useState<{
-    contractAddress: string;
-    nonce: string;
-  } | null>(null);
-  const [issuing, setIssuing] = useState(false);
-  const [issueError, setIssueError] = useState<string | null>(null);
+  const [tab, setTab] = useState<"admit" | "info">("admit");
+  const [nonceInput, setNonceInput] = useState("");
+  const [admitting, setAdmitting] = useState(false);
+  const [admitResult, setAdmitResult] = useState<"success" | "error" | null>(null);
+  const [admitError, setAdmitError] = useState<string | null>(null);
   const [eventStatus, setEventStatus] = useState<EventStatus>("active");
   const [statusLoading, setStatusLoading] = useState(false);
   const [statusError, setStatusError] = useState<string | null>(null);
 
-  const refresh = useCallback(() => {
-    backendApi.requests.byEvent(address)
-      .then(setRequests)
-      .catch((err: unknown) => {
-        console.warn("Failed to load requests:", err);
-      });
-  }, [address]);
-
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
-
-  const pendingCount = requests.filter((r) => r.status === "PENDING").length;
-  const approvedCount = requests.filter((r) => r.status === "APPROVED").length;
-
   async function buildApi() {
-    // Connect wallet on-demand — triggers the wallet picker popup if needed.
     const liveWallet = wallet ?? await connect();
     const secretHex = getCallerSecret(address);
     if (!secretHex) throw new Error("Organizer secret not found in storage.");
@@ -475,129 +456,59 @@ function OrganizerView({
     }
   }
 
-  async function approveRequest(req: RequestRecord) {
-    setProcessingId(req.id);
-    setIssueError(null);
+  async function handleAdmit(e: React.FormEvent) {
+    e.preventDefault();
+    const trimmed = nonceInput.trim();
+    if (!trimmed) return;
+    setAdmitting(true);
+    setAdmitResult(null);
+    setAdmitError(null);
     try {
       const contractApi = await buildApi();
-      const { nonce } = await contractApi.issueTicket();
-      const { bigintToHex } = await import("@sdk/contract-api");
-      const nonceHex = bigintToHex(nonce);
-
-      // Store the nonce on the backend so the attendee can retrieve it
-      await backendApi.requests.update(req.id, { status: "APPROVED", ticketNonce: nonceHex });
-
-      // Also register the ticket commitment on backend (non-fatal)
-      try {
-        const event = await backendApi.events.byAddress(address);
-        await backendApi.tickets.issue({ commitment: nonceHex, eventId: event.id });
-      } catch {
-        console.warn("Backend ticket sync failed — continuing.");
-      }
-
-      setRequests((prev) =>
-        prev.map((r) =>
-          r.id === req.id
-            ? { ...r, status: "APPROVED" as const, processedAt: new Date().toISOString() }
-            : r,
-        ),
-      );
+      const { hexToBigint } = await import("@sdk/contract-api");
+      const nonce = hexToBigint(trimmed.startsWith("0x") ? trimmed : `0x${trimmed}`);
+      await contractApi.admitTicket(nonce);
+      setAdmitResult("success");
+      setNonceInput("");
     } catch (err) {
-      setIssueError(err instanceof Error ? err.message : String(err));
+      setAdmitResult("error");
+      setAdmitError(err instanceof Error ? err.message : String(err));
     } finally {
-      setProcessingId(null);
+      setAdmitting(false);
     }
   }
 
-  async function rejectRequest(req: RequestRecord) {
-    setProcessingId(req.id);
-    try {
-      await backendApi.requests.update(req.id, { status: "REJECTED" });
-      setRequests((prev) =>
-        prev.map((r) =>
-          r.id === req.id
-            ? { ...r, status: "REJECTED" as const, processedAt: new Date().toISOString() }
-            : r,
-        ),
-      );
-    } catch (err) {
-      setIssueError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setProcessingId(null);
-    }
-  }
-
-  async function issueDirectly() {
-    setIssuing(true);
-    setIssueError(null);
-    setDirectSecret(null);
-    try {
-      const contractApi = await buildApi();
-      const { nonce } = await contractApi.issueTicket();
-      const { bigintToHex } = await import("@sdk/contract-api");
-      setDirectSecret(contractApi.ticketSecret(nonce));
-
-      // Sync to backend (non-fatal)
-      try {
-        const event = await backendApi.events.byAddress(address);
-        await backendApi.tickets.issue({ commitment: bigintToHex(nonce), eventId: event.id });
-      } catch {
-        console.warn("Backend ticket sync failed — continuing.");
-      }
-    } catch (err) {
-      setIssueError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setIssuing(false);
-    }
-  }
-
-  const canIssue = eventStatus === "active";
   const isCancelled = eventStatus === "cancelled";
 
   return (
     <div>
-      {/* Event status controls */}
+      {/* Status controls */}
       <div className="flex items-center gap-2 mb-6">
-        <span
-          className={`text-xs border px-2.5 py-1 rounded-full ${
-            isCancelled
-              ? "border-red-500/30 text-red-400"
-              : eventStatus === "paused"
-              ? "border-yellow-500/30 text-yellow-400"
-              : "border-emerald-500/30 text-emerald-400"
-          }`}
-        >
+        <span className={`text-xs border px-2.5 py-1 rounded-full ${
+          isCancelled ? "border-red-500/30 text-red-400"
+          : eventStatus === "paused" ? "border-yellow-500/30 text-yellow-400"
+          : "border-emerald-500/30 text-emerald-400"
+        }`}>
           {isCancelled ? "Cancelled" : eventStatus === "paused" ? "Paused" : "Active"}
         </span>
 
         {!isCancelled && (
           <>
             {eventStatus === "active" ? (
-              <button
-                onClick={() => changeStatus("pause")}
-                disabled={statusLoading}
-                className="text-xs text-zinc-400 hover:text-yellow-400 border border-white/8 hover:border-yellow-500/30 px-2.5 py-1 rounded-full transition-colors disabled:opacity-30"
-              >
+              <button onClick={() => changeStatus("pause")} disabled={statusLoading}
+                className="text-xs text-zinc-400 hover:text-yellow-400 border border-white/8 hover:border-yellow-500/30 px-2.5 py-1 rounded-full transition-colors disabled:opacity-30">
                 {statusLoading ? "…" : "Pause"}
               </button>
             ) : (
-              <button
-                onClick={() => changeStatus("resume")}
-                disabled={statusLoading}
-                className="text-xs text-zinc-400 hover:text-emerald-400 border border-white/8 hover:border-emerald-500/30 px-2.5 py-1 rounded-full transition-colors disabled:opacity-30"
-              >
+              <button onClick={() => changeStatus("resume")} disabled={statusLoading}
+                className="text-xs text-zinc-400 hover:text-emerald-400 border border-white/8 hover:border-emerald-500/30 px-2.5 py-1 rounded-full transition-colors disabled:opacity-30">
                 {statusLoading ? "…" : "Resume"}
               </button>
             )}
             <button
-              onClick={() => {
-                if (confirm("Cancel this event permanently? This cannot be undone.")) {
-                  changeStatus("cancel");
-                }
-              }}
+              onClick={() => { if (confirm("Cancel this event permanently? This cannot be undone.")) changeStatus("cancel"); }}
               disabled={statusLoading}
-              className="text-xs text-zinc-600 hover:text-red-400 border border-white/8 hover:border-red-500/30 px-2.5 py-1 rounded-full transition-colors disabled:opacity-30"
-            >
+              className="text-xs text-zinc-600 hover:text-red-400 border border-white/8 hover:border-red-500/30 px-2.5 py-1 rounded-full transition-colors disabled:opacity-30">
               Cancel event
             </button>
           </>
@@ -609,147 +520,78 @@ function OrganizerView({
       {/* Organizer key backup */}
       <OrganizerKeyExport contractAddress={address} eventName={event.eventName} />
 
-      {/* Stats */}
-      <div className="grid grid-cols-3 gap-3 mb-6">
-        {[
-          { label: "Total", value: event.totalTickets },
-          { label: "Approved", value: approvedCount },
-          { label: "Pending", value: pendingCount },
-        ].map(({ label, value }) => (
-          <div
-            key={label}
-            className="rounded-xl border border-white/8 bg-white/3 px-4 py-3 text-center"
-          >
-            <p className="text-xl font-bold text-white tabular-nums">{value}</p>
-            <p className="text-xs text-zinc-500 mt-0.5">{label}</p>
-          </div>
-        ))}
-      </div>
-
-      {/* Wallet required for actions */}
-      {isCancelled && (
-        <div className="mb-4 rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3">
-          <p className="text-xs text-red-400">This event has been permanently cancelled. No further tickets can be issued.</p>
-        </div>
-      )}
-
       {/* Tabs */}
       <div className="flex gap-1 border-b border-white/8 mb-6">
-        {(
-          [
-            ["requests", `Requests${pendingCount > 0 ? ` (${pendingCount})` : ""}`],
-            ["attendees", "Attendees"],
-            ["issue", "Issue Direct"],
-          ] as [OrganizerTab, string][]
-        ).map(([id, label]) => (
-          <button
-            key={id}
-            onClick={() => setTab(id)}
-            className={`px-3 py-2 text-sm -mb-px border-b-2 transition-colors ${
-              tab === id
-                ? "border-white text-white font-medium"
-                : "border-transparent text-zinc-500 hover:text-white"
-            }`}
-          >
-            {label}
+        {(["admit", "info"] as const).map((id) => (
+          <button key={id} onClick={() => setTab(id)}
+            className={`px-3 py-2 text-sm -mb-px border-b-2 transition-colors capitalize ${
+              tab === id ? "border-white text-white font-medium" : "border-transparent text-zinc-500 hover:text-white"
+            }`}>
+            {id === "admit" ? "Admit Attendees" : "Event Info"}
           </button>
         ))}
       </div>
 
-      {/* Tab: Requests */}
-      {tab === "requests" && (
-        <div className="space-y-3">
-          {requests.length === 0 ? (
-            <p className="text-sm text-zinc-600 py-8 text-center">
-              No ticket requests yet. Share the event URL with attendees.
-            </p>
-          ) : (
-            requests.map((req) => (
-              <RequestCard
-                key={req.id}
-                req={req}
-                processingId={processingId}
-                onApprove={approveRequest}
-                onReject={rejectRequest}
-              />
-            ))
-          )}
+      {/* Tab: Admit */}
+      {tab === "admit" && (
+        <div className="space-y-5">
+          <p className="text-sm text-zinc-400 leading-relaxed">
+            Scan an attendee&apos;s QR code or paste their ticket nonce to admit them. This marks the ticket as used on-chain, preventing double admission.
+          </p>
 
-          {/* Share URL hint */}
+          <form onSubmit={handleAdmit} className="space-y-3">
+            <div>
+              <label htmlFor="nonceInput" className="block text-xs font-medium text-zinc-400 mb-2">
+                Ticket nonce (hex)
+              </label>
+              <input
+                id="nonceInput"
+                type="text"
+                placeholder="0x…"
+                value={nonceInput}
+                onChange={(e) => { setNonceInput(e.target.value); setAdmitResult(null); }}
+                disabled={admitting || isCancelled}
+                className="w-full bg-white/[0.03] border border-white/8 px-4 py-3 text-sm text-white font-mono placeholder-zinc-700 focus:outline-none focus:border-white/25 disabled:opacity-40 transition-colors"
+              />
+            </div>
+            <button type="submit" disabled={admitting || !nonceInput.trim() || isCancelled}
+              className="w-full bg-white text-black text-sm font-semibold py-3 hover:bg-zinc-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+              {admitting ? "Submitting ZK proof…" : isCancelled ? "Event is cancelled" : "Admit Attendee"}
+            </button>
+          </form>
+
+          {admitResult === "success" && (
+            <div className="border border-emerald-500/20 bg-emerald-500/[0.04] px-4 py-4">
+              <p className="text-sm font-semibold text-emerald-400">✓ Admitted</p>
+              <p className="text-xs text-zinc-400 mt-1">Ticket marked as used on-chain. Attendee admitted successfully.</p>
+            </div>
+          )}
+          {admitResult === "error" && admitError && <ErrorBox message={admitError} />}
+        </div>
+      )}
+
+      {/* Tab: Info */}
+      {tab === "info" && (
+        <div className="space-y-4">
+          <div className="border border-white/8 divide-y divide-white/6">
+            <div className="flex items-center justify-between px-4 py-3">
+              <p className="text-xs text-zinc-500">Total capacity</p>
+              <p className="text-sm font-mono text-white">{event.totalTickets}</p>
+            </div>
+            <div className="flex items-center justify-between px-4 py-3">
+              <p className="text-xs text-zinc-500">Min age</p>
+              <p className="text-sm font-mono text-white">
+                {(event.minAge ?? 0) > 0 ? `${event.minAge}+` : "No restriction"}
+              </p>
+            </div>
+            <div className="flex items-center justify-between px-4 py-3">
+              <p className="text-xs text-zinc-500">Contract</p>
+              <p className="text-xs font-mono text-zinc-400 truncate max-w-[180px]">{address}</p>
+            </div>
+          </div>
           <ShareHint address={address} />
         </div>
       )}
-
-      {/* Tab: Attendees */}
-      {tab === "attendees" && (
-        <div className="space-y-4">
-          <div className="rounded-xl border border-white/8 bg-white/3 px-5 py-5">
-            <p className="text-sm font-medium text-white mb-1">
-              {approvedCount} ticket{approvedCount !== 1 ? "s" : ""} issued
-            </p>
-            <p className="text-xs text-zinc-500 leading-relaxed">
-              Each attendee is identified only by a Poseidon hash commitment on
-              the ledger. No names, emails, or identities are stored.
-            </p>
-          </div>
-          {requests
-            .filter((r) => r.status === "APPROVED")
-            .map((r) => (
-              <div
-                key={r.id}
-                className="flex items-center justify-between gap-4 rounded-xl border border-white/8 px-4 py-3"
-              >
-                <div>
-                  <p className="text-sm text-white">{r.requesterName}</p>
-                  <p className="text-xs text-zinc-600">
-                    Approved {r.processedAt ? new Date(r.processedAt).toLocaleDateString() : ""}
-                  </p>
-                </div>
-                <span className="text-xs text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-full">
-                  Issued
-                </span>
-              </div>
-            ))}
-        </div>
-      )}
-
-      {/* Tab: Issue Directly */}
-      {tab === "issue" && (
-        <div className="space-y-4">
-          <p className="text-sm text-zinc-400">
-            Issue a ticket without a request — useful for VIPs or offline
-            registration. Share the resulting secret with the attendee via a
-            private channel.
-          </p>
-
-          <button
-            onClick={issueDirectly}
-            disabled={issuing || !canIssue}
-            className="w-full bg-white text-black text-sm font-medium py-3 rounded-xl hover:bg-zinc-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-          >
-            {issuing ? "Generating ZK proof…" : isCancelled ? "Event is cancelled" : eventStatus === "paused" ? "Event is paused" : "Issue Ticket"}
-          </button>
-
-          {issuing && (
-            <div className="rounded-xl border border-white/8 bg-white/3 px-4 py-3">
-              <p className="text-xs text-zinc-400">
-                Generating proof and submitting transaction. This takes 2–4 min.
-              </p>
-            </div>
-          )}
-
-          {directSecret && (
-            <SecretBox
-              secret={directSecret}
-              label="Ticket secret — share privately with the attendee"
-            />
-          )}
-
-          {issueError && <ErrorBox message={issueError} />}
-        </div>
-      )}
-
-      {issueError && tab === "requests" && <ErrorBox message={issueError} />}
     </div>
   );
 }
@@ -758,323 +600,152 @@ function OrganizerView({
 
 function AttendeeView({
   address,
-  eventName,
+  event,
 }: {
   address: string;
-  eventName?: string;
+  event: StoredEvent | null;
 }) {
-  const { user } = useAuth();
-  const [name, setName] = useState("");
-  const [note, setNote] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
-  const [myReq, setMyReq] = useState<RequestRecord | null>(null);
-  const [loadingReq, setLoadingReq] = useState(true);
-  const [savedTicket, setSavedTicket] = useState(false);
+  const { wallet, connect } = useWallet();
+  const [claiming, setClaiming] = useState(false);
+  const [claimError, setClaimError] = useState<string | null>(null);
+  const [showDobModal, setShowDobModal] = useState(false);
+  const [dob, setDob] = useState("");
+  // Check if a ticket for this event is already saved locally
+  const existingTicket = getMyTickets().find((t) => t.contractAddress === address);
+  const [savedTicket, setSavedTicket] = useState(existingTicket ?? null);
 
-  // Check for an existing request on mount (requires auth)
-  useEffect(() => {
-    if (!user) {
-      setLoadingReq(false);
-      return;
-    }
-    backendApi.requests.mine(address)
-      .then((req) => setMyReq(req))
-      .catch(() => {})
-      .finally(() => setLoadingReq(false));
-  }, [address, user]);
-
-  // Auto-poll every 8 s while the request is still PENDING
-  useEffect(() => {
-    if (!user || !myReq || myReq.status !== "PENDING") return;
-    const interval = setInterval(() => {
-      backendApi.requests.mine(address)
-        .then((req) => { if (req) setMyReq(req); })
-        .catch(() => {});
-    }, 8000);
-    return () => clearInterval(interval);
-  }, [address, user, myReq]);
-
-  async function submitRequest(e: React.FormEvent) {
+  async function handleClaim(e: React.FormEvent) {
     e.preventDefault();
-    if (!user) return;
-    setSubmitting(true);
-    setSubmitError(null);
+    if (!dob) return;
+    setClaiming(true);
+    setClaimError(null);
     try {
-      const req = await backendApi.requests.create({
+      const liveWallet = wallet ?? await connect();
+      const birthYear = new Date(dob).getFullYear();
+      const [{ createEventTicketProviders }, { EventTicketAPI }, { PREPROD_CONFIG }] =
+        await Promise.all([
+          import("@sdk/providers"),
+          import("@sdk/contract-api"),
+          import("@sdk/types"),
+        ]);
+      const providers = await createEventTicketProviders(liveWallet, PREPROD_CONFIG);
+      const contractApi = await EventTicketAPI.joinAsAttendee(providers, address);
+      const { nonce } = await contractApi.claimTicket(birthYear);
+      const secret = contractApi.ticketSecret(nonce);
+      const ticket = {
+        id: crypto.randomUUID(),
         contractAddress: address,
-        requesterName: name.trim(),
-        note: note.trim() || undefined,
-      });
-      setMyReq(req);
+        eventName: event?.eventName ?? address,
+        secret,
+        receivedAt: new Date().toISOString(),
+      };
+      saveTicket(ticket);
+      setSavedTicket(ticket);
+      setShowDobModal(false);
     } catch (err) {
-      // 409 = already submitted — just fetch the existing request
-      if ((err as { status?: number }).status === 409) {
-        const existing = await backendApi.requests.mine(address).catch(() => null);
-        if (existing) { setMyReq(existing); return; }
-      }
-      setSubmitError(err instanceof Error ? err.message : String(err));
+      setClaimError(err instanceof Error ? err.message : String(err));
     } finally {
-      setSubmitting(false);
+      setClaiming(false);
     }
   }
 
-  async function refreshStatus() {
-    if (!user) return;
-    const req = await backendApi.requests.mine(address).catch(() => null);
-    if (req) setMyReq(req);
-  }
-
-  function claimTicket(secret: { contractAddress: string; nonce: string }) {
-    saveTicket({
-      id: myReq!.id,
-      contractAddress: address,
-      eventName: eventName ?? address,
-      secret,
-      receivedAt: new Date().toISOString(),
-    });
-    setSavedTicket(true);
-  }
-
-  // Not logged in — can't request
-  if (!user) {
+  if (savedTicket) {
+    const qrValue = JSON.stringify(savedTicket.secret);
     return (
-      <div className="rounded-xl border border-white/8 bg-white/3 px-5 py-6 text-center space-y-3">
-        <p className="text-sm font-medium text-white">Sign in to request a ticket</p>
-        <p className="text-xs text-zinc-500">
-          Connect with Google using the button in the top-right corner to submit a request.
-        </p>
-      </div>
-    );
-  }
-
-  if (loadingReq) {
-    return (
-      <div className="space-y-3">
-        <div className="h-24 rounded-xl bg-white/3 animate-pulse" />
-      </div>
-    );
-  }
-
-  if (myReq) {
-    const ticketSecret = myReq.status === "APPROVED" && myReq.ticketNonce
-      ? { contractAddress: address, nonce: myReq.ticketNonce }
-      : null;
-
-    return (
-      <div>
-        <div className="mb-6 rounded-xl border border-white/8 bg-white/3 px-5 py-5">
-          <div className="flex items-center justify-between mb-3">
-            <p className="text-sm font-medium text-white">Your request</p>
-            <StatusPill status={myReq.status} />
-          </div>
-          <p className="text-xs text-zinc-400">
-            Requested by <span className="text-white">{myReq.requesterName}</span>
-          </p>
-          {myReq.note && (
-            <p className="text-xs text-zinc-500 mt-1 italic">&ldquo;{myReq.note}&rdquo;</p>
-          )}
-          <p className="text-xs text-zinc-600 mt-2">
-            {new Date(myReq.createdAt).toLocaleString()}
-          </p>
-          {myReq.status === "PENDING" && (
-            <button
-              onClick={refreshStatus}
-              className="mt-4 text-xs text-zinc-500 hover:text-white transition-colors underline underline-offset-4"
-            >
-              Refresh status
-            </button>
-          )}
+      <div className="space-y-5">
+        <div>
+          <p className="text-[10px] font-semibold text-zinc-600 uppercase tracking-widest mb-1">Your ticket</p>
+          <h2 className="text-base font-bold text-white">{savedTicket.eventName}</h2>
         </div>
-
-        {ticketSecret && !savedTicket && (
-          <div className="space-y-4">
-            <SecretBox
-              secret={ticketSecret}
-              label="Your ticket secret — save it, this is your proof of ownership"
-            />
-            <button
-              onClick={() => claimTicket(ticketSecret)}
-              className="w-full bg-white text-black text-sm font-medium py-3 rounded-xl hover:bg-zinc-100 transition-colors"
-            >
-              Save to My Tickets
-            </button>
-          </div>
-        )}
-
-        {savedTicket && (
-          <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/6 px-4 py-4">
-            <p className="text-sm font-medium text-emerald-400 mb-1">
-              Ticket saved
-            </p>
-            <p className="text-xs text-zinc-400">
-              Find it in{" "}
-              <Link
-                href="/my-tickets"
-                className="underline underline-offset-4 hover:text-white"
-              >
-                My Tickets
-              </Link>
-              . Use Verify to prove ownership.
-            </p>
-          </div>
-        )}
-
-        {myReq.status === "REJECTED" && (
-          <div className="rounded-xl border border-red-500/20 bg-red-500/6 px-4 py-4">
-            <p className="text-sm text-red-400">
-              Your ticket request was not accepted.
-            </p>
-          </div>
-        )}
+        {/* QR code */}
+        <div className="flex flex-col items-center gap-4 border border-white/8 bg-white p-6">
+          <QRCode value={qrValue} size={200} />
+          <p className="text-xs text-zinc-800 text-center">
+            Show this QR code at the venue entrance
+          </p>
+        </div>
+        <div className="border border-white/6 bg-white/[0.02] px-4 py-3">
+          <p className="text-xs text-zinc-600 break-all font-mono">{savedTicket.secret.nonce}</p>
+        </div>
+        <Link href="/my-tickets"
+          className="block text-center text-xs text-zinc-500 hover:text-white transition-colors underline underline-offset-4">
+          View all my tickets →
+        </Link>
       </div>
     );
   }
+
+  const minAge = event?.minAge ?? 0;
 
   return (
-    <div>
-      <div className="mb-6">
-        <h2 className="text-base font-semibold text-white mb-1">
-          Request a Ticket
-        </h2>
-        <p className="text-sm text-zinc-500">
-          The organizer will review your request and issue a private ticket
-          secret if approved.
+    <div className="space-y-5">
+      <div className="border border-white/8 bg-white/[0.02] px-5 py-5 space-y-3">
+        <h2 className="text-base font-semibold text-white">Get your ticket</h2>
+        <p className="text-sm text-zinc-500 leading-relaxed">
+          Claim a ticket with a zero-knowledge age proof.
+          {minAge > 0 && ` You must be ${minAge}+ years old.`}
+          {" "}Your date of birth stays private — only the proof is submitted on-chain.
         </p>
+        <button
+          onClick={() => setShowDobModal(true)}
+          className="w-full bg-white text-black text-sm font-semibold py-3 hover:bg-zinc-100 transition-colors">
+          Claim Ticket
+        </button>
       </div>
 
-      <form onSubmit={submitRequest} className="space-y-4">
-        <div>
-          <label
-            htmlFor="reqName"
-            className="block text-xs font-medium text-zinc-400 mb-2"
-          >
-            Your name
-          </label>
-          <input
-            id="reqName"
-            type="text"
-            placeholder="Alice"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            required
-            maxLength={80}
-            className="w-full bg-white/4 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-white/30 transition-colors"
-          />
-        </div>
-
-        <div>
-          <label
-            htmlFor="reqNote"
-            className="block text-xs font-medium text-zinc-400 mb-2"
-          >
-            Note{" "}
-            <span className="text-zinc-600 font-normal">(optional)</span>
-          </label>
-          <textarea
-            id="reqNote"
-            rows={3}
-            placeholder="Any message for the organizer…"
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            maxLength={280}
-            className="w-full bg-white/4 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-white/30 transition-colors resize-none"
-          />
-        </div>
-
-        <button
-          type="submit"
-          disabled={submitting || !name.trim()}
-          className="w-full bg-white text-black text-sm font-medium py-3 rounded-xl hover:bg-zinc-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-        >
-          {submitting ? "Submitting…" : "Request Ticket"}
-        </button>
-
-        {submitError && <ErrorBox message={submitError} />}
-      </form>
-
       <ShareHint address={address} />
+
+      {/* DOB modal */}
+      {showDobModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">
+          <div className="w-full max-w-sm border border-white/10 bg-[#0d0d0d] overflow-hidden">
+            <div className="px-5 py-4 border-b border-white/8">
+              <p className="text-xs font-mono text-zinc-600 uppercase tracking-widest mb-1">ZK Age Proof</p>
+              <h3 className="text-sm font-bold text-white">Enter your date of birth</h3>
+            </div>
+            <form onSubmit={handleClaim} className="px-5 py-5 space-y-4">
+              <p className="text-xs text-zinc-500 leading-relaxed">
+                Your date of birth is never sent anywhere. A zero-knowledge proof is generated locally in your browser to prove
+                {minAge > 0 ? ` you are ${minAge}+` : " your age"} without revealing the actual date.
+              </p>
+              <div>
+                <label htmlFor="dobInput" className="block text-xs font-medium text-zinc-400 mb-2">
+                  Date of birth
+                </label>
+                <input id="dobInput" type="date"
+                  value={dob}
+                  onChange={(e) => { setDob(e.target.value); setClaimError(null); }}
+                  max={new Date().toISOString().split("T")[0]}
+                  required disabled={claiming}
+                  className="w-full bg-white/[0.03] border border-white/8 px-4 py-3 text-sm text-white focus:outline-none focus:border-white/25 disabled:opacity-40 transition-colors"
+                />
+              </div>
+              {claimError && <ErrorBox message={claimError} />}
+              <div className="flex gap-2">
+                <button type="submit" disabled={claiming || !dob}
+                  className="flex-1 bg-white text-black text-sm font-semibold py-3 hover:bg-zinc-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+                  {claiming ? "Generating ZK proof…" : "Claim Ticket"}
+                </button>
+                <button type="button" onClick={() => { setShowDobModal(false); setClaimError(null); }}
+                  disabled={claiming}
+                  className="px-5 text-sm text-zinc-500 border border-white/8 hover:text-white hover:border-white/20 disabled:opacity-30 transition-colors">
+                  Cancel
+                </button>
+              </div>
+              {claiming && (
+                <p className="text-xs text-zinc-600 text-center">
+                  Generating proof and submitting transaction. This may take 2–4 min.
+                </p>
+              )}
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 // ─── Shared sub-components ────────────────────────────────────────────────────
-
-function RequestCard({
-  req,
-  processingId,
-  onApprove,
-  onReject,
-}: {
-  req: RequestRecord;
-  processingId: string | null;
-  onApprove: (r: RequestRecord) => void;
-  onReject: (r: RequestRecord) => void;
-}) {
-  const busy = processingId === req.id;
-
-  return (
-    <div className="rounded-xl border border-white/8 bg-white/3 px-5 py-4">
-      <div className="flex items-start justify-between gap-4 mb-2">
-        <div>
-          <p className="text-sm font-medium text-white">{req.requesterName}</p>
-          {req.note && (
-            <p className="text-xs text-zinc-500 mt-0.5 italic">
-              &ldquo;{req.note}&rdquo;
-            </p>
-          )}
-          <p className="text-xs text-zinc-600 mt-1">
-            {new Date(req.createdAt).toLocaleString()}
-          </p>
-        </div>
-        <StatusPill status={req.status} />
-      </div>
-
-      {req.status === "PENDING" && (
-        <div className="flex gap-2 mt-3">
-          <button
-            onClick={() => onApprove(req)}
-            disabled={busy}
-            className="flex-1 bg-white text-black text-xs font-medium py-2 rounded-lg hover:bg-zinc-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-          >
-            {busy ? "Issuing…" : "Approve"}
-          </button>
-          <button
-            onClick={() => onReject(req)}
-            disabled={busy}
-            className="flex-1 border border-white/10 text-zinc-400 text-xs py-2 rounded-lg hover:border-white/25 hover:text-white disabled:opacity-30 transition-colors"
-          >
-            Reject
-          </button>
-        </div>
-      )}
-
-      {req.status === "APPROVED" && (
-        <p className="mt-3 text-xs text-emerald-400/80">
-          Ticket secret delivered — attendee can collect it on their device.
-        </p>
-      )}
-    </div>
-  );
-}
-
-function StatusPill({ status }: { status: RequestRecord["status"] }) {
-  const styles: Record<RequestRecord["status"], string> = {
-    PENDING:  "border-yellow-500/20 text-yellow-400",
-    APPROVED: "border-emerald-500/20 text-emerald-400",
-    REJECTED: "border-red-500/20 text-red-400",
-  };
-  const labels: Record<RequestRecord["status"], string> = {
-    PENDING: "Pending",
-    APPROVED: "Approved",
-    REJECTED: "Rejected",
-  };
-  return (
-    <span className={`shrink-0 text-xs border px-2 py-0.5 rounded-full ${styles[status]}`}>
-      {labels[status]}
-    </span>
-  );
-}
 
 function SecretBox({
   secret,
@@ -1092,13 +763,10 @@ function SecretBox({
   }
 
   return (
-    <div className="rounded-xl border border-white/10 bg-white/4 px-4 py-4">
+    <div className="border border-white/10 bg-white/[0.02] px-4 py-4">
       <div className="flex items-center justify-between mb-3">
         <p className="text-xs font-medium text-zinc-300">{label}</p>
-        <button
-          onClick={copy}
-          className="text-xs text-zinc-500 hover:text-white transition-colors"
-        >
+        <button onClick={copy} className="text-xs text-zinc-500 hover:text-white transition-colors">
           {copied ? "Copied!" : "Copy JSON"}
         </button>
       </div>
@@ -1111,7 +779,7 @@ function SecretBox({
 
 function ErrorBox({ message }: { message: string }) {
   return (
-    <div className="rounded-xl border border-red-500/20 bg-red-500/6 px-4 py-4">
+    <div className="border border-red-500/20 bg-red-500/[0.04] px-4 py-4">
       <p className="text-sm font-medium text-red-400 mb-1">Error</p>
       <p className="text-xs text-red-300/70 break-all">{message}</p>
     </div>

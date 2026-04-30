@@ -26,19 +26,8 @@ export interface StoredEvent {
   startDate: string;
   /** ISO 8601 — event end datetime. */
   endDate: string;
-}
-
-export interface TicketRequest {
-  id: string;
-  contractAddress: string;
-  eventName: string;
-  requesterName: string;
-  note: string;
-  status: "pending" | "approved" | "rejected";
-  /** Set when organizer approves and issues a ticket. */
-  secret?: { contractAddress: string; nonce: string };
-  requestedAt: string;
-  processedAt?: string;
+  /** Minimum attendee age for this event (0 = no restriction). */
+  minAge?: number;
 }
 
 export interface SavedTicket {
@@ -73,8 +62,6 @@ function write<T>(key: string, value: T): void {
 const K = {
   MY_EVENTS: "mt_my_events",
   MY_TICKETS: "mt_my_tickets",
-  requests: (addr: string) => `mt_req_${addr}`,
-  myReqId: (addr: string) => `mt_my_req_${addr}`,
   callerSecret: (addr: string) => `mt_secret_${addr}`,
 } as const;
 
@@ -106,40 +93,6 @@ export function saveCallerSecret(contractAddress: string, secretHex: string): vo
 
 export function getCallerSecret(contractAddress: string): string | null {
   return read<string | null>(K.callerSecret(contractAddress), null);
-}
-
-// ─── Ticket requests ─────────────────────────────────────────────────────────
-
-export function getEventRequests(contractAddress: string): TicketRequest[] {
-  return read<TicketRequest[]>(K.requests(contractAddress), []);
-}
-
-export function addRequest(request: TicketRequest): void {
-  const list = getEventRequests(request.contractAddress);
-  list.unshift(request);
-  write(K.requests(request.contractAddress), list);
-}
-
-export function updateRequest(
-  contractAddress: string,
-  id: string,
-  updates: Partial<TicketRequest>,
-): void {
-  const list = getEventRequests(contractAddress);
-  const idx = list.findIndex((r) => r.id === id);
-  if (idx >= 0) {
-    list[idx] = { ...list[idx], ...updates };
-    write(K.requests(contractAddress), list);
-  }
-}
-
-/** Remember which request ID belongs to the current attendee on this browser. */
-export function getMyRequestId(contractAddress: string): string | null {
-  return read<string | null>(K.myReqId(contractAddress), null);
-}
-
-export function setMyRequestId(contractAddress: string, id: string): void {
-  write(K.myReqId(contractAddress), id);
 }
 
 // ─── My tickets ───────────────────────────────────────────────────────────────

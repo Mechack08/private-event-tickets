@@ -27,6 +27,7 @@ const LocationPickerMap = dynamic(
 interface FormState {
   eventName:    string;
   totalTickets: string;
+  minAge:       string;
   description:  string;
   // Time
   startDate:    string;
@@ -717,7 +718,8 @@ function Step0({
   onChange: (key: keyof FormState) => (e: React.ChangeEvent<HTMLInputElement>) => void;
   onNext: () => void;
 }) {
-  const canContinue = form.eventName.trim().length > 0 && parseInt(form.totalTickets) >= 1;
+  const ageVal = parseInt(form.minAge);
+  const canContinue = form.eventName.trim().length > 0 && parseInt(form.totalTickets) >= 1 && !isNaN(ageVal) && ageVal >= 0 && ageVal <= 120;
 
   return (
     <div className="space-y-6">
@@ -740,6 +742,13 @@ function Step0({
         hint="Maximum tickets ever issued. Permanent — choose carefully.">
         <input id="totalTickets" type="number" min={1} max={4294967295}
           value={form.totalTickets} onChange={onChange("totalTickets")}
+          required className={inputCls} />
+      </Field>
+
+      <Field id="minAge" label="Minimum age" badge="Uint<8>"
+        hint="Attendees must prove they meet this age via ZK proof. Set 0 for no restriction.">
+        <input id="minAge" type="number" min={0} max={120}
+          value={form.minAge} onChange={onChange("minAge")}
           required className={inputCls} />
       </Field>
 
@@ -917,6 +926,7 @@ function ReviewStep({
   const rows: { label: string; value: string; tag?: string }[] = [
     { label: "Event name",   value: form.eventName || "—",                  tag: "on-chain"  },
     { label: "Capacity",     value: `${form.totalTickets} tickets`,          tag: "on-chain"  },
+    { label: "Min age",      value: parseInt(form.minAge) > 0 ? `${form.minAge}+` : "No restriction", tag: "on-chain" },
     { label: "Starts",       value: fmt(form.startDate, form.startTime),     tag: "off-chain" },
     { label: "Ends",         value: fmt(form.endDate,   form.endTime),       tag: "off-chain" },
     { label: "Location",     value: locationDisplay,                         tag: "off-chain" },
@@ -1158,7 +1168,7 @@ export default function NewEventPage() {
   const { user: authUser }  = useAuth();
 
   const [form, setForm] = useState<FormState>({
-    eventName: "", totalTickets: "100",
+    eventName: "", totalTickets: "100", minAge: "0",
     description: "",
     startDate: "", startTime: "18:00",
     endDate:   "", endTime:   "21:00",
@@ -1340,7 +1350,7 @@ export default function NewEventPage() {
       bumpProgress("deploy", "done", api.contractAddress);
       bumpProgress("circuit", "active");
 
-      await api.createEvent(form.eventName.trim(), BigInt(form.totalTickets));
+      await api.createEvent(form.eventName.trim(), BigInt(form.totalTickets), parseInt(form.minAge || "0"));
       bumpProgress("circuit", "done");
       bumpProgress("key", "active");
 
@@ -1389,6 +1399,7 @@ export default function NewEventPage() {
           startDate:       startDateIso,
           endDate:         endDateIso,
           maxCapacity:     parseInt(form.totalTickets, 10),
+          minAge:          parseInt(form.minAge || "0", 10),
         });
         await queryClient.invalidateQueries({ queryKey: ["events"] });
         bumpProgress("backend", "done");
@@ -1430,6 +1441,7 @@ export default function NewEventPage() {
         startDate:       toIso(form.startDate, form.startTime),
         endDate:         toIso(form.endDate,   form.endTime),
         maxCapacity:     parseInt(form.totalTickets, 10),
+        minAge:          parseInt(form.minAge || "0", 10),
       });
       await queryClient.invalidateQueries({ queryKey: ["events"] });
       setSuccess((s) => s ? { ...s, backendSyncFailed: false } : s);

@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import QRCode from "react-qr-code";
 import { Nav } from "@/components/Nav";
 import { useWallet } from "@/contexts/WalletContext";
 import {
@@ -141,10 +142,12 @@ export default function MyTicketsPage() {
           {/* Tickets list */}
           {tickets.length === 0 ? (
             <div className="text-center py-20 border border-white/6 bg-white/[0.02]">
-              <p className="text-zinc-600 text-sm">No tickets saved yet.</p>
-              <p className="text-zinc-700 text-xs mt-2">
-                Request a ticket on an event page, or import a secret above.
-              </p>
+              <p className="text-xs text-zinc-600 text-center">
+              No tickets saved yet.
+            </p>
+            <p className="text-zinc-700 text-xs mt-2">
+              Claim a ticket on an event page, or import a secret above.
+            </p>
             </div>
           ) : (
             <div className="space-y-2">
@@ -256,6 +259,15 @@ function TicketCard({
       {/* Expanded detail */}
       {expanded && (
         <div className="border-t border-white/6 px-5 py-4 space-y-4">
+          {/* QR code */}
+          <div>
+            <p className="text-xs text-zinc-500 mb-3">Venue QR code</p>
+            <div className="flex flex-col items-center gap-3 bg-white p-5 border border-white/8">
+              <QRCode value={JSON.stringify(ticket.secret)} size={180} />
+              <p className="text-xs text-zinc-800">Show this at the venue entrance</p>
+            </div>
+          </div>
+
           {/* Secret preview */}
           <div>
             <div className="flex items-center justify-between mb-2">
