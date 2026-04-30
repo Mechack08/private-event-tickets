@@ -6,30 +6,38 @@
  *
  * ─── Witness mechanism ────────────────────────────────────────────────────
  *
- * Two witnesses drive all private inputs:
+ * Three witnesses drive all private inputs:
  *
  *   caller_secret(): Field
  *     The identity scalar of whoever is calling an organizer-gated circuit.
  *     The contract stores persistentHash(caller_secret()) as the organizer
  *     commitment on create_event, and verifies it (or delegate membership)
  *     on all subsequent management circuits.
- *     Value: supplied via EventTicketAPI._callerSecret (set at construction).
+ *     Value: supplied via EventTicketAPI.callerSecret (set at construction).
  *
  *   ticket_nonce(): Field
  *     A one-time scalar tied to a single ticket.
- *     - In issueTicket()   the SDK auto-generates a fresh random value.
- *     - In verifyTicket()  the attendee supplies their stored nonce.
+ *     - In claimTicket()   the SDK auto-generates a fresh random value.
+ *     - In verifyTicket() / admitTicket()  the holder supplies their stored nonce.
  *     - In grantDelegate() the organizer generates a random delegate secret;
  *       the circuit hashes it and stores only the hash on-chain.
  *     Value: supplied via EventTicketAPI._pendingTicketNonce.
+ *
+ *   birth_year(): Uint<16>
+ *     The attendee's four-digit birth year (e.g. 1995).
+ *     Private witness — never disclosed on-chain.  Used by claim_ticket to
+ *     prove the attendee meets min_age without revealing their exact DOB.
+ *     Year-level granularity keeps arithmetic inside Compact's safe range.
+ *     Value: supplied via EventTicketAPI._pendingBirthYear.
  */
 
 import type { MidnightProviders } from "@midnight-ntwrk/midnight-js-types";
 import type {
+  AdmitTicketResult,
+  ClaimTicketResult,
   DeployResult,
   EventState,
   GrantDelegateResult,
-  IssueTicketResult,
   TicketSecret,
   VerifyTicketResult,
 } from "./types.js";
@@ -43,8 +51,14 @@ type LedgerView = {
   tickets_issued: bigint;
   is_active: boolean;
   is_cancelled: boolean;
-  ticket_price: bigint;
+  min_age: bigint;
   ticket_commitments: {
+    isEmpty(): boolean;
+    size(): bigint;
+    member(elem: Uint8Array): boolean;
+    [Symbol.iterator](): Iterator<Uint8Array>;
+  };
+  used_tickets: {
     isEmpty(): boolean;
     size(): bigint;
     member(elem: Uint8Array): boolean;
@@ -171,6 +185,7 @@ export function hexToBigint(hex: string): bigint {
 async function buildCompiledContract(
   getCallerSecret: () => bigint,
   getTicketNonce: () => bigint,
+  getBirthYear: () => bigint,
 ) {
   const [mod, CompiledContract] = await Promise.all([
     getContractModule(),
@@ -187,6 +202,11 @@ async function buildCompiledContract(
     ticket_nonce: (context: any): [any, bigint] => [
       context.privateState,
       getTicketNonce(),
+    ],
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    birth_year: (context: any): [any, bigint] => [
+      context.privateState,
+      getBirthYear(),
     ],
   };
 
@@ -210,6 +230,7 @@ export class EventTicketAPI {
   readonly callerSecret: bigint;
 
   private _pendingTicketNonce: bigint | null = null;
+  private _pendingBirthYear: bigint = 0n;
 
   private constructor(
     private readonly providers: MidnightProviders,
@@ -248,15 +269,19 @@ export class EventTicketAPI {
       buildCompiledContract(
         () => api.callerSecret,
         () => api._getTicketNonce(),
+        () => api._pendingBirthYear,
       ),
       getMidnightContracts(),
     ]);
-    // deployContract returns { deployTxData, callTx, … }; contractAddress lives
-    // at deployed.deployTxData.public.contractAddress
     const deployed = await deployContract(providers, { compiledContract: compiled });
     const contractAddress: string = deployed.deployTxData.public.contractAddress;
     console.log(`Contract deployed: ${contractAddress}`);
-    return new EventTicketAPI(providers, deployed, contractAddress, secret);
+    // Mutate api in-place so the witness closures above keep referencing the same object.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (api as any)._contract = deployed;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (api as any).contractAddress = contractAddress;
+    return api;
   }
 
   // ── Factory: join (organizer / delegate) ─────────────────────────────────
@@ -276,11 +301,16 @@ export class EventTicketAPI {
       buildCompiledContract(
         () => api.callerSecret,
         () => api._getTicketNonce(),
+        () => api._pendingBirthYear,
       ),
       getMidnightContracts(),
     ]);
     const found = await findDeployedContract(providers, { compiledContract: compiled, contractAddress });
-    return new EventTicketAPI(providers, found, contractAddress, callerSecret);
+    // Mutate api in-place — same reason as in deploy(): witness closures must
+    // reference the same object that claimTicket() writes _pendingTicketNonce on.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (api as any)._contract = found;
+    return api;
   }
 
   // ── Factory: joinAsAttendee ───────────────────────────────────────────────
@@ -302,24 +332,35 @@ export class EventTicketAPI {
   async createEvent(
     name: string,
     totalTickets: bigint,
+    minAge: number,
   ): Promise<{ txId: string }> {
     const r = await this._contract.callTx.create_event(
       stringToBytes32(name),
       totalTickets,
+      BigInt(minAge),
     );
     return { txId: r.public.txId };
   }
 
-  // ── Circuit: issue_ticket ────────────────────────────────────────────────
+  // ── Circuit: claim_ticket ────────────────────────────────────────────────
 
   /**
-   * Issue one ticket.  Returns the random nonce — share it with the attendee
-   * as their ticket secret.  Must be called by organizer or delegate.
+   * Self-service ticket claim.  Called by the attendee.
+   *
+   * @param birthYear  Attendee's four-digit birth year (e.g. 1995).
+   *                   Stays private — used only as a witness to prove the
+   *                   age constraint on-chain.  Never disclosed.
+   *
+   * Returns the random nonce — stored in the attendee's localStorage as
+   * their private ticket secret and encoded in their QR code.
    */
-  async issueTicket(): Promise<IssueTicketResult> {
-    this._pendingTicketNonce = null; // witness auto-generates
-    const r = await this._contract.callTx.issue_ticket();
+  async claimTicket(birthYear: number): Promise<ClaimTicketResult> {
+    this._pendingBirthYear = BigInt(birthYear);
+    this._pendingTicketNonce = null; // auto-generate fresh random nonce
+    const currentYear = BigInt(new Date().getFullYear());
+    const r = await this._contract.callTx.claim_ticket(currentYear);
     const nonce = this._pendingTicketNonce;
+    this._pendingBirthYear = 0n;
     this._pendingTicketNonce = null;
     if (nonce === null) throw new Error("Witness did not generate a nonce");
     return { txId: r.public.txId, nonce };
@@ -328,8 +369,9 @@ export class EventTicketAPI {
   // ── Circuit: verify_ticket ───────────────────────────────────────────────
 
   /**
-   * Prove ticket ownership.  The holder supplies the nonce from their ticket
-   * secret.  Returns verified=true if the commitment is in the on-chain Set.
+   * ZK proof of ticket ownership (read-only — no state mutation).
+   * Returns verified=true if the ticket exists AND has not been admitted yet.
+   * Attendees can call this to self-check before arriving at the venue.
    */
   async verifyTicket(nonce: bigint): Promise<VerifyTicketResult> {
     this._pendingTicketNonce = nonce;
@@ -337,6 +379,23 @@ export class EventTicketAPI {
     this._pendingTicketNonce = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return { txId: r.public.txId, verified: (r as any).private?.result ?? false };
+  }
+
+  // ── Circuit: admit_ticket ────────────────────────────────────────────────
+
+  /**
+   * Organizer scans attendee QR at the venue and admits them.
+   * Atomically verifies the ticket is valid and unused, then marks it used.
+   * Throws if the ticket was never issued or has already been admitted.
+   * Must be called by the organizer or a registered delegate.
+   *
+   * @param nonce  The nonce decoded from the attendee's QR code.
+   */
+  async admitTicket(nonce: bigint): Promise<AdmitTicketResult> {
+    this._pendingTicketNonce = nonce;
+    const r = await this._contract.callTx.admit_ticket();
+    this._pendingTicketNonce = null;
+    return { txId: r.public.txId };
   }
 
   // ── Circuit: pause_event ─────────────────────────────────────────────────
@@ -400,7 +459,7 @@ export class EventTicketAPI {
       ticketsIssued: raw.tickets_issued,
       isActive:      raw.is_active,
       isCancelled:   raw.is_cancelled,
-      ticketPrice:   raw.ticket_price,
+      minAge:        raw.min_age,
     };
   }
 
