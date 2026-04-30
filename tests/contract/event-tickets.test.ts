@@ -48,6 +48,22 @@ const STRANGER_SECRET = 99999999999999999999n;
 /** A delegate secret for grant_delegate tests. */
 const DELEGATE_SECRET = 55555555555555555555n;
 
+/**
+ * "Today" (current year) used throughout tests.
+ * Used as the `current_year: Uint<16>` public parameter for claim_ticket.
+ */
+const TODAY = 2025n;
+
+/**
+ * Birth year for an "adult" attendee: 1995 (~30 years old in 2025).
+ */
+const DOB_ADULT = 1995n;
+
+/**
+ * Birth year for a "minor" attendee: 2015 (~10 years old in 2025).
+ */
+const DOB_MINOR = 2015n;
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /** Encode a plain ASCII string as a 32-byte Uint8Array (zero-padded). */
@@ -66,16 +82,18 @@ function fromBytes32(b: Uint8Array): string {
 
 /**
  * Build a Contract instance whose witnesses are fixed scalars supplied by the
- * caller.  Both witnesses return `[privateState, value]` — the contract uses
+ * caller.  All witnesses return `[privateState, value]` — the contract uses
  * no private state so we just echo the unchanged empty object back.
  */
 function makeContract(
   callerSecret: bigint,
   ticketNonce: bigint = 0n,
+  birthYear: bigint = DOB_ADULT,
 ): Contract<unknown> {
   return new Contract<unknown>({
     caller_secret: (ctx) => [ctx.privateState, callerSecret],
-    ticket_nonce: (ctx) => [ctx.privateState, ticketNonce],
+    ticket_nonce:  (ctx) => [ctx.privateState, ticketNonce],
+    birth_year:    (ctx) => [ctx.privateState, birthYear],
   });
 }
 
@@ -140,18 +158,20 @@ describe("event-tickets contract simulation", () => {
   // ── create_event ──────────────────────────────────────────────────────────
 
   describe("create_event", () => {
-    it("stores the event name, total tickets, and sets is_active=true", () => {
+    it("stores event name, total tickets, min_age, and sets is_active=true", () => {
       const contract = makeContract(ORGANIZER_SECRET);
       const state = runCircuit(
         contract.circuits.create_event,
         emptyState,
         toBytes32("Midnight Gala"),
         50n,
+        18n,
       );
 
       const view = ledger(state);
       expect(fromBytes32(view.event_name)).toBe("Midnight Gala");
       expect(view.total_tickets).toBe(50n);
+      expect(view.min_age).toBe(18n);
       expect(view.tickets_issued).toBe(0n);
       expect(view.is_active).toBe(true);
       expect(view.is_cancelled).toBe(false);
@@ -164,6 +184,7 @@ describe("event-tickets contract simulation", () => {
         emptyState,
         toBytes32("Hash Test"),
         10n,
+        0n,
       );
 
       const view = ledger(state);
@@ -171,15 +192,16 @@ describe("event-tickets contract simulation", () => {
       expect(view.organizer).toEqual(expectedCommitment);
     });
 
-    it("sets ticket_price to 0 (free events only in V1)", () => {
+    it("min_age=0 means no restriction (free for all)", () => {
       const contract = makeContract(ORGANIZER_SECRET);
       const state = runCircuit(
         contract.circuits.create_event,
         emptyState,
-        toBytes32("Free Event"),
+        toBytes32("Open Event"),
         5n,
+        0n,
       );
-      expect(ledger(state).ticket_price).toBe(0n);
+      expect(ledger(state).min_age).toBe(0n);
     });
 
     it("rejects a second call — 'Event already initialized'", () => {
@@ -189,19 +211,20 @@ describe("event-tickets contract simulation", () => {
         emptyState,
         toBytes32("Already Exists"),
         10n,
+        0n,
       );
 
       const ctx = makeCtx(state);
       expect(() =>
-        contract.circuits.create_event(ctx, toBytes32("Another"), 5n),
+        contract.circuits.create_event(ctx, toBytes32("Another"), 5n, 0n),
       ).toThrow("Event already initialized");
     });
   });
 
-  // ── issue_ticket ──────────────────────────────────────────────────────────
+  // ── claim_ticket ──────────────────────────────────────────────────────────
 
-  describe("issue_ticket", () => {
-    /** Active event state used by most issue_ticket tests. */
+  describe("claim_ticket", () => {
+    /** Active no-restriction event state used by most claim_ticket tests. */
     let activeState: ChargedState;
 
     beforeEach(() => {
@@ -209,15 +232,16 @@ describe("event-tickets contract simulation", () => {
       activeState = runCircuit(
         contract.circuits.create_event,
         emptyState,
-        toBytes32("Issue Test Event"),
+        toBytes32("Claim Test Event"),
         100n,
+        0n, // no age restriction
       );
     });
 
     it("increments tickets_issued and stores the nonce commitment on-chain", () => {
       const NONCE = 111111111111111111n;
-      const contract = makeContract(ORGANIZER_SECRET, NONCE);
-      const state = runCircuit(contract.circuits.issue_ticket, activeState);
+      const contract = makeContract(ORGANIZER_SECRET, NONCE, DOB_ADULT);
+      const state = runCircuit(contract.circuits.claim_ticket, activeState, TODAY);
 
       const view = ledger(state);
       expect(view.tickets_issued).toBe(1n);
@@ -225,64 +249,163 @@ describe("event-tickets contract simulation", () => {
       expect(view.ticket_commitments.member(expectedCommitment)).toBe(true);
     });
 
-    it("allows multiple tickets to be issued sequentially", () => {
+    it("allows multiple tickets to be claimed sequentially", () => {
       let state = activeState;
       for (let i = 1n; i <= 3n; i++) {
-        const contract = makeContract(ORGANIZER_SECRET, i * 1000n);
-        state = runCircuit(contract.circuits.issue_ticket, state);
+        const contract = makeContract(ORGANIZER_SECRET, i * 1000n, DOB_ADULT);
+        state = runCircuit(contract.circuits.claim_ticket, state, TODAY);
       }
       expect(ledger(state).tickets_issued).toBe(3n);
     });
 
-    it("rejects an unauthorised caller — 'Not authorized'", () => {
-      // Stranger was NOT the organizer during create_event
-      const contract = makeContract(STRANGER_SECRET);
-      const ctx = makeCtx(activeState);
-      expect(() => contract.circuits.issue_ticket(ctx)).toThrow("Not authorized");
-    });
-
-    it("rejects when the event is paused — 'Event is paused'", () => {
-      // Pause the event first
-      const pauseContract = makeContract(ORGANIZER_SECRET);
-      const pausedState = runCircuit(
-        pauseContract.circuits.pause_event,
-        activeState,
+    it("passes age check when attendee meets minimum age (18+)", () => {
+      // Create an 18+ event
+      const createC = makeContract(ORGANIZER_SECRET);
+      const ageRestrictedState = runCircuit(
+        createC.circuits.create_event,
+        emptyState,
+        toBytes32("18+ Event"),
+        50n,
+        18n,
       );
 
-      const issueContract = makeContract(ORGANIZER_SECRET, 42n);
+      // 30-year-old attendee should pass
+      const NONCE = 222222222222n;
+      const claimC = makeContract(ORGANIZER_SECRET, NONCE, DOB_ADULT);
+      const state = runCircuit(claimC.circuits.claim_ticket, ageRestrictedState, TODAY);
+      expect(ledger(state).tickets_issued).toBe(1n);
+    });
+
+    it("rejects underage attendee — 'Age requirement not met'", () => {
+      // Create an 18+ event
+      const createC = makeContract(ORGANIZER_SECRET);
+      const ageRestrictedState = runCircuit(
+        createC.circuits.create_event,
+        emptyState,
+        toBytes32("18+ Event"),
+        50n,
+        18n,
+      );
+
+      // 10-year-old attendee should fail
+      const claimC = makeContract(ORGANIZER_SECRET, 333333333333n, DOB_MINOR);
+      const ctx = makeCtx(ageRestrictedState);
+      expect(() =>
+        claimC.circuits.claim_ticket(ctx, TODAY),
+      ).toThrow("Age requirement not met");
+    });
+
+    it("rejects a future birth year — 'Invalid birth year'", () => {
+      const FUTURE_YEAR = TODAY + 1n; // next year
+      const claimC = makeContract(ORGANIZER_SECRET, 444444444444n, FUTURE_YEAR);
+      const ctx = makeCtx(activeState);
+      expect(() =>
+        claimC.circuits.claim_ticket(ctx, TODAY),
+      ).toThrow("Invalid birth year");
+    });
+
+    it("rejects when the event is paused — 'Event is not active'", () => {
+      const pauseContract = makeContract(ORGANIZER_SECRET);
+      const pausedState = runCircuit(pauseContract.circuits.pause_event, activeState);
+
+      const claimContract = makeContract(ORGANIZER_SECRET, 42n, DOB_ADULT);
       const ctx = makeCtx(pausedState);
-      expect(() => issueContract.circuits.issue_ticket(ctx)).toThrow("Event is paused");
+      expect(() => claimContract.circuits.claim_ticket(ctx, TODAY)).toThrow("Event is not active");
     });
 
     it("rejects when the event is cancelled — 'Event is cancelled'", () => {
       const cancelContract = makeContract(ORGANIZER_SECRET);
-      const cancelledState = runCircuit(
-        cancelContract.circuits.cancel_event,
-        activeState,
-      );
+      const cancelledState = runCircuit(cancelContract.circuits.cancel_event, activeState);
 
-      const issueContract = makeContract(ORGANIZER_SECRET, 42n);
+      const claimContract = makeContract(ORGANIZER_SECRET, 42n, DOB_ADULT);
       const ctx = makeCtx(cancelledState);
-      expect(() => issueContract.circuits.issue_ticket(ctx)).toThrow("Event is cancelled");
+      expect(() => claimContract.circuits.claim_ticket(ctx, TODAY)).toThrow("Event is cancelled");
     });
 
     it("rejects when the event is sold out — 'Event is sold out'", () => {
-      // Create a 1-ticket event and issue that ticket
-      const c = makeContract(ORGANIZER_SECRET);
+      // Create a 1-ticket event and claim that ticket
+      const createC = makeContract(ORGANIZER_SECRET);
       let state = runCircuit(
-        c.circuits.create_event,
+        createC.circuits.create_event,
         emptyState,
         toBytes32("Tiny Event"),
         1n,
+        0n,
       );
 
-      const issueC = makeContract(ORGANIZER_SECRET, 9999n);
-      state = runCircuit(issueC.circuits.issue_ticket, state);
+      const claimC = makeContract(ORGANIZER_SECRET, 9999n, DOB_ADULT);
+      state = runCircuit(claimC.circuits.claim_ticket, state, TODAY);
 
-      // Second issue should fail
-      const issueC2 = makeContract(ORGANIZER_SECRET, 8888n);
+      // Second claim should fail
+      const claimC2 = makeContract(ORGANIZER_SECRET, 8888n, DOB_ADULT);
       const ctx = makeCtx(state);
-      expect(() => issueC2.circuits.issue_ticket(ctx)).toThrow("Event is sold out");
+      expect(() => claimC2.circuits.claim_ticket(ctx, TODAY)).toThrow("Event is sold out");
+    });
+  });
+
+  // ── admit_ticket ──────────────────────────────────────────────────────────
+
+  describe("admit_ticket", () => {
+    const TICKET_NONCE = 555555555555n;
+    let stateWithTicket: ChargedState;
+
+    beforeEach(() => {
+      const createC = makeContract(ORGANIZER_SECRET);
+      let state = runCircuit(
+        createC.circuits.create_event,
+        emptyState,
+        toBytes32("Admit Test"),
+        10n,
+        0n,
+      );
+      const claimC = makeContract(ORGANIZER_SECRET, TICKET_NONCE, DOB_ADULT);
+      stateWithTicket = runCircuit(claimC.circuits.claim_ticket, state, TODAY);
+    });
+
+    it("organizer can admit a valid ticket — inserts into used_tickets", () => {
+      const admitC = makeContract(ORGANIZER_SECRET, TICKET_NONCE);
+      const state = runCircuit(admitC.circuits.admit_ticket, stateWithTicket);
+
+      const commitment = hashScalar(TICKET_NONCE);
+      expect(ledger(state).used_tickets.member(commitment)).toBe(true);
+    });
+
+    it("rejects an already-used ticket — 'Ticket already used'", () => {
+      const admitC = makeContract(ORGANIZER_SECRET, TICKET_NONCE);
+      const usedState = runCircuit(admitC.circuits.admit_ticket, stateWithTicket);
+
+      const admitC2 = makeContract(ORGANIZER_SECRET, TICKET_NONCE);
+      const ctx = makeCtx(usedState);
+      expect(() => admitC2.circuits.admit_ticket(ctx)).toThrow("Ticket already used");
+    });
+
+    it("rejects a non-existent ticket — 'Ticket not found'", () => {
+      const FAKE_NONCE = 99999999n; // was never claimed
+      const admitC = makeContract(ORGANIZER_SECRET, FAKE_NONCE);
+      const ctx = makeCtx(stateWithTicket);
+      expect(() => admitC.circuits.admit_ticket(ctx)).toThrow("Ticket not found");
+    });
+
+    it("rejects an unauthorized caller — 'Not authorized'", () => {
+      const admitC = makeContract(STRANGER_SECRET, TICKET_NONCE);
+      const ctx = makeCtx(stateWithTicket);
+      expect(() => admitC.circuits.admit_ticket(ctx)).toThrow("Not authorized");
+    });
+
+    it("delegate can admit a ticket after being granted access", () => {
+      // Grant delegate access
+      const grantC = makeContract(ORGANIZER_SECRET, DELEGATE_SECRET);
+      const stateWithDelegate = runCircuit(
+        grantC.circuits.grant_delegate,
+        stateWithTicket,
+      );
+
+      // Delegate admits the ticket
+      const admitC = makeContract(DELEGATE_SECRET, TICKET_NONCE);
+      const state = runCircuit(admitC.circuits.admit_ticket, stateWithDelegate);
+
+      const commitment = hashScalar(TICKET_NONCE);
+      expect(ledger(state).used_tickets.member(commitment)).toBe(true);
     });
   });
 
@@ -293,20 +416,21 @@ describe("event-tickets contract simulation", () => {
     let stateWithTicket: ChargedState;
 
     beforeEach(() => {
-      // Create event + issue exactly one ticket
+      // Create event + claim exactly one ticket
       const createC = makeContract(ORGANIZER_SECRET);
-      const issueC = makeContract(ORGANIZER_SECRET, TICKET_NONCE);
+      const claimC = makeContract(ORGANIZER_SECRET, TICKET_NONCE, DOB_ADULT);
 
       let state = runCircuit(
         createC.circuits.create_event,
         emptyState,
         toBytes32("Verify Test"),
         10n,
+        0n,
       );
-      stateWithTicket = runCircuit(issueC.circuits.issue_ticket, state);
+      stateWithTicket = runCircuit(claimC.circuits.claim_ticket, state, TODAY);
     });
 
-    it("returns true for the valid ticket nonce", () => {
+    it("returns true for a valid unclaimed ticket nonce", () => {
       const verifyC = makeContract(0n, TICKET_NONCE);
       const ctx = makeCtx(stateWithTicket);
       const result = verifyC.circuits.verify_ticket(ctx);
@@ -321,14 +445,23 @@ describe("event-tickets contract simulation", () => {
       expect(result.result).toBe(false);
     });
 
-    it("confirms each issued ticket independently", () => {
-      // Issue a second ticket with a different nonce
+    it("returns false for a ticket that has already been admitted", () => {
+      // Admit the ticket first
+      const admitC = makeContract(ORGANIZER_SECRET, TICKET_NONCE);
+      const admittedState = runCircuit(admitC.circuits.admit_ticket, stateWithTicket);
+
+      // verify_ticket should now return false
+      const verifyC = makeContract(0n, TICKET_NONCE);
+      const ctx = makeCtx(admittedState);
+      const result = verifyC.circuits.verify_ticket(ctx);
+      expect(result.result).toBe(false);
+    });
+
+    it("confirms each claimed ticket independently", () => {
+      // Claim a second ticket with a different nonce
       const NONCE_2 = 888888888888n;
-      const issueC2 = makeContract(ORGANIZER_SECRET, NONCE_2);
-      const stateWithTwo = runCircuit(
-        issueC2.circuits.issue_ticket,
-        stateWithTicket,
-      );
+      const claimC2 = makeContract(ORGANIZER_SECRET, NONCE_2, DOB_ADULT);
+      const stateWithTwo = runCircuit(claimC2.circuits.claim_ticket, stateWithTicket, TODAY);
 
       for (const [nonce, shouldBeValid] of [
         [TICKET_NONCE, true],
@@ -354,6 +487,7 @@ describe("event-tickets contract simulation", () => {
         emptyState,
         toBytes32("Pause Test"),
         10n,
+        0n,
       );
     });
 
@@ -392,6 +526,7 @@ describe("event-tickets contract simulation", () => {
         emptyState,
         toBytes32("Resume Test"),
         10n,
+        0n,
       );
       pausedState = runCircuit(pauseC.circuits.pause_event, state);
       expect(ledger(pausedState).is_active).toBe(false); // sanity
@@ -432,6 +567,7 @@ describe("event-tickets contract simulation", () => {
         emptyState,
         toBytes32("Cancel Test"),
         10n,
+        0n,
       );
     });
 
@@ -458,17 +594,16 @@ describe("event-tickets contract simulation", () => {
       expect(() => c.circuits.cancel_event(ctx)).toThrow("Not authorized");
     });
 
-    it("blocks issue / pause / resume / grant_delegate after cancellation", () => {
+    it("blocks claim / pause / resume / grant_delegate after cancellation", () => {
       const cancelC = makeContract(ORGANIZER_SECRET);
       const cancelledState = runCircuit(cancelC.circuits.cancel_event, activeState);
 
-      // These circuits all assert !is_cancelled and should throw
-      for (const circuitName of [
-        "issue_ticket",
-        "pause_event",
-        "resume_event",
-        "grant_delegate",
-      ] as const) {
+      // claim_ticket (any caller)
+      const claimC = makeContract(ORGANIZER_SECRET, 1n, DOB_ADULT);
+      expect(() => claimC.circuits.claim_ticket(makeCtx(cancelledState), TODAY)).toThrow("Event is cancelled");
+
+      // pause_event / resume_event / grant_delegate (organizer)
+      for (const circuitName of ["pause_event", "resume_event", "grant_delegate"] as const) {
         const c = makeContract(ORGANIZER_SECRET, 1n);
         const ctx = makeCtx(cancelledState);
         expect(() => c.circuits[circuitName](ctx)).toThrow("Event is cancelled");
@@ -476,8 +611,6 @@ describe("event-tickets contract simulation", () => {
     });
 
     it("cancel_event is idempotent — calling it twice does not throw", () => {
-      // The contract has no !is_cancelled guard in cancel_event itself —
-      // cancelling an already-cancelled event is a no-op.
       const cancelC = makeContract(ORGANIZER_SECRET);
       const cancelledState = runCircuit(cancelC.circuits.cancel_event, activeState);
 
@@ -500,6 +633,7 @@ describe("event-tickets contract simulation", () => {
         emptyState,
         toBytes32("Delegate Test"),
         20n,
+        0n,
       );
     });
 
@@ -512,26 +646,24 @@ describe("event-tickets contract simulation", () => {
       expect(view.delegates.member(delegateHash)).toBe(true);
     });
 
-    it("allows the delegate to issue tickets", () => {
+    it("allows the delegate to claim tickets on behalf (admit_ticket)", () => {
       // Grant delegate
       const grantC = makeContract(ORGANIZER_SECRET, DELEGATE_SECRET);
-      const stateWithDelegate = runCircuit(
-        grantC.circuits.grant_delegate,
-        activeState,
-      );
+      let state = runCircuit(grantC.circuits.grant_delegate, activeState);
 
-      // Delegate issues a ticket
+      // Claim a ticket first (as organizer)
       const NONCE = 424242424242n;
-      const issueC = makeContract(DELEGATE_SECRET, NONCE);
-      const finalState = runCircuit(issueC.circuits.issue_ticket, stateWithDelegate);
+      const claimC = makeContract(ORGANIZER_SECRET, NONCE, DOB_ADULT);
+      state = runCircuit(claimC.circuits.claim_ticket, state, TODAY);
 
-      const view = ledger(finalState);
-      expect(view.tickets_issued).toBe(1n);
-      expect(view.ticket_commitments.member(hashScalar(NONCE))).toBe(true);
+      // Delegate admits the ticket
+      const admitC = makeContract(DELEGATE_SECRET, NONCE);
+      const finalState = runCircuit(admitC.circuits.admit_ticket, state);
+
+      expect(ledger(finalState).used_tickets.member(hashScalar(NONCE))).toBe(true);
     });
 
     it("rejects a non-organizer trying to grant delegate access", () => {
-      // Stranger is NOT the organizer — should fail
       const c = makeContract(STRANGER_SECRET, DELEGATE_SECRET);
       const ctx = makeCtx(activeState);
       expect(() => c.circuits.grant_delegate(ctx)).toThrow(
@@ -572,38 +704,69 @@ describe("event-tickets contract simulation", () => {
   // ── cross-circuit invariants ───────────────────────────────────────────────
 
   describe("invariants", () => {
-    it("ticket_commitments set grows with each issued ticket", () => {
+    it("ticket_commitments set grows with each claimed ticket", () => {
       const createC = makeContract(ORGANIZER_SECRET);
       let state = runCircuit(
         createC.circuits.create_event,
         emptyState,
         toBytes32("Invariant Test"),
         10n,
+        0n,
       );
 
       for (let i = 1n; i <= 5n; i++) {
         state = runCircuit(
-          makeContract(ORGANIZER_SECRET, i).circuits.issue_ticket,
+          makeContract(ORGANIZER_SECRET, i, DOB_ADULT).circuits.claim_ticket,
           state,
+          TODAY,
         );
         expect(ledger(state).ticket_commitments.size()).toBe(i);
       }
     });
 
-    it("issued nonce commitments are unique in the set", () => {
+    it("used_tickets grows with each admitted ticket and ticket_commitments is unchanged", () => {
+      const createC = makeContract(ORGANIZER_SECRET);
+      let state = runCircuit(
+        createC.circuits.create_event,
+        emptyState,
+        toBytes32("Used Tickets Test"),
+        10n,
+        0n,
+      );
+
+      const nonces = [111n, 222n, 333n];
+      for (const n of nonces) {
+        state = runCircuit(
+          makeContract(ORGANIZER_SECRET, n, DOB_ADULT).circuits.claim_ticket,
+          state,
+          TODAY,
+        );
+      }
+      // Admit the first two only
+      state = runCircuit(makeContract(ORGANIZER_SECRET, 111n).circuits.admit_ticket, state);
+      state = runCircuit(makeContract(ORGANIZER_SECRET, 222n).circuits.admit_ticket, state);
+
+      const view = ledger(state);
+      expect(view.ticket_commitments.size()).toBe(3n); // all claimed
+      expect(view.used_tickets.size()).toBe(2n);       // only 2 admitted
+    });
+
+    it("claimed nonce commitments are unique in the set", () => {
       const createC = makeContract(ORGANIZER_SECRET);
       let state = runCircuit(
         createC.circuits.create_event,
         emptyState,
         toBytes32("Unique Nonces"),
         10n,
+        0n,
       );
 
       const nonces = [111n, 222n, 333n];
       for (const n of nonces) {
         state = runCircuit(
-          makeContract(ORGANIZER_SECRET, n).circuits.issue_ticket,
+          makeContract(ORGANIZER_SECRET, n, DOB_ADULT).circuits.claim_ticket,
           state,
+          TODAY,
         );
       }
 
@@ -615,23 +778,25 @@ describe("event-tickets contract simulation", () => {
       expect(view.ticket_commitments.member(hashScalar(999n))).toBe(false);
     });
 
-    it("pause → resume cycle restores full issuance capability", () => {
+    it("pause → resume cycle restores full claiming capability", () => {
       const createC = makeContract(ORGANIZER_SECRET);
       let state = runCircuit(
         createC.circuits.create_event,
         emptyState,
         toBytes32("Cycle Test"),
         5n,
+        0n,
       );
 
-      // Issue, pause, resume, issue again — all should work
-      state = runCircuit(makeContract(ORGANIZER_SECRET, 1n).circuits.issue_ticket, state);
+      // Claim, pause, resume, claim again — all should work
+      state = runCircuit(makeContract(ORGANIZER_SECRET, 1n, DOB_ADULT).circuits.claim_ticket, state, TODAY);
       state = runCircuit(makeContract(ORGANIZER_SECRET).circuits.pause_event, state);
       state = runCircuit(makeContract(ORGANIZER_SECRET).circuits.resume_event, state);
-      state = runCircuit(makeContract(ORGANIZER_SECRET, 2n).circuits.issue_ticket, state);
+      state = runCircuit(makeContract(ORGANIZER_SECRET, 2n, DOB_ADULT).circuits.claim_ticket, state, TODAY);
 
       expect(ledger(state).tickets_issued).toBe(2n);
       expect(ledger(state).is_active).toBe(true);
     });
   });
 });
+
