@@ -14,25 +14,31 @@ export ledger total_tickets:      Uint<32>;       // max issuable tickets
 export ledger tickets_issued:     Counter;        // monotonically-increasing count
 export ledger is_active:          Boolean;        // false = paused; also false when cancelled
 export ledger is_cancelled:       Boolean;        // permanent shutdown — cannot be reversed
-export ledger ticket_price:       Uint<64>;       // reserved for V2 paid events; always 0 now
+export ledger min_age:            Uint<8>;        // minimum attendee age (0 = no restriction)
 export ledger ticket_commitments: Set<Bytes<32>>; // persistentHash(ticket_nonce) per ticket
+export ledger used_tickets:       Set<Bytes<32>>; // commitments marked used at venue (admit_ticket)
 export ledger delegates:          Set<Bytes<32>>; // persistentHash(delegate_secret) per co-manager
 
 // ─── Witnesses ────────────────────────────────────────────────────────────────
 //
-// caller_secret — private identity scalar of whoever is calling an
-//   organizer-gated circuit.  The SDK supplies either the organizer's stored
-//   secret or a delegate secret shared by the organizer off-chain.
+// caller_secret — private identity scalar for organizer-gated circuits.
+//   The SDK supplies the organizer's stored secret or a delegate secret.
 //
 // ticket_nonce  — one-time scalar tied to a single ticket.
-//   In issue_ticket  the SDK auto-generates a fresh random value.
-//   In verify_ticket the attendee's SDK supplies the stored nonce from their
-//   ticket secret.
-//   In grant_delegate the organizer's SDK supplies the new delegate's secret
-//   so the circuit can hash and store it without the raw value touching the chain.
+//   In claim_ticket  the SDK auto-generates a fresh random value.
+//   In verify_ticket / admit_ticket the holder (or organizer) supplies the
+//   stored nonce from their ticket secret.
+//   In grant_delegate the organizer's SDK supplies the new delegate's secret.
+//
+// birth_year    — attendee's four-digit birth year (e.g. 1995).
+//   Private witness — never disclosed on-chain.  Used by claim_ticket to
+//   prove the attendee meets the event's minimum age without revealing DOB.
+//   Using a year rather than a full Unix timestamp keeps the arithmetic
+//   inside Compact's safe integer range.
 //
 witness caller_secret(): Field;
 witness ticket_nonce():  Field;
+witness birth_year():    Uint<16>;
 
 // ─── Circuits ─────────────────────────────────────────────────────────────────
 
@@ -47,33 +53,49 @@ witness ticket_nonce():  Field;
 // preimage can satisfy the auth assertions in all other organizer circuits.
 // ---------------------------------------------------------------------------
 export circuit create_event(
-  name  : Bytes<32>,
-  total : Uint<32>
+  name    : Bytes<32>,
+  total   : Uint<32>,
+  age_req : Uint<8>
 ): [] {
   assert(organizer == default<Bytes<32>>, "Event already initialized");
   organizer     = disclose(persistentHash<Field>(caller_secret()));
   event_name    = disclose(name);
   total_tickets = disclose(total);
+  min_age       = disclose(age_req);
   is_active     = disclose(true);
   is_cancelled  = disclose(false);
-  ticket_price  = disclose(0);
 }
 
 // ---------------------------------------------------------------------------
-// issue_ticket
+// claim_ticket
 //
-// Issues one ticket by storing persistentHash(ticket_nonce) on-chain.
-// Callable by the organizer or any registered delegate.
+// Self-service ticket issuance.  Any attendee can call this — no organizer
+// approval required.  Guards:
+//   1. Event must be active and not cancelled.
+//   2. Tickets must not be sold out.
+//   3. Attendee must meet the minimum age.
 //
-// The SDK captures the raw nonce from the witness and returns it to the
-// caller so it can be shared with the attendee as their private ticket secret.
+// The age is verified via the birth_year() witness:
+//   age = current_year - birth_year()
+//   assert age >= min_age
+//
+// The birth year never leaves the attendee's browser — only the ZK proof
+// that the constraint holds is submitted on-chain.  Year-level granularity
+// is sufficient for age gating and avoids large-integer arithmetic.
+//
+// The SDK captures the raw ticket_nonce from the witness and returns it to
+// the caller as their private ticket secret (stored in localStorage).
 // ---------------------------------------------------------------------------
-export circuit issue_ticket(): [] {
-  const caller_h: Bytes<32> = persistentHash<Field>(caller_secret());
-  assert(disclose(caller_h == organizer) || delegates.member(disclose(caller_h)), "Not authorized");
+export circuit claim_ticket(current_year: Uint<16>): [] {
   assert(!is_cancelled, "Event is cancelled");
-  assert(is_active, "Event is paused");
+  assert(is_active, "Event is not active");
   assert(tickets_issued < total_tickets, "Event is sold out");
+
+  const byear: Uint<16> = birth_year();
+  assert(current_year >= byear, "Invalid birth year");
+  const age: Uint<16>   = current_year - byear;
+  assert(age >= (min_age as Uint<16>), "Age requirement not met");
+
   const nonce: Field          = ticket_nonce();
   const commitment: Bytes<32> = persistentHash<Field>(nonce);
   ticket_commitments.insert(disclose(commitment));
@@ -83,20 +105,46 @@ export circuit issue_ticket(): [] {
 // ---------------------------------------------------------------------------
 // verify_ticket
 //
-// ZK proof of ticket ownership.  The attendee proves they know the nonce
-// whose hash is in the on-chain Set — without revealing the nonce itself
-// or which specific commitment matched.
+// Read-only ZK proof of ticket ownership.  Returns true if:
+//   - The commitment is in the ticket_commitments Set (valid ticket), AND
+//   - The commitment has NOT yet been admitted (not in used_tickets).
+//
+// This is safe to call without mutating state — useful for self-check before
+// attending.  To actually admit an attendee at the venue, use admit_ticket().
 // ---------------------------------------------------------------------------
 export circuit verify_ticket(): Boolean {
   const nonce: Field          = ticket_nonce();
   const commitment: Bytes<32> = persistentHash<Field>(nonce);
-  return ticket_commitments.member(disclose(commitment));
+  return ticket_commitments.member(disclose(commitment))
+      && !used_tickets.member(disclose(commitment));
+}
+
+// ---------------------------------------------------------------------------
+// admit_ticket
+//
+// Called by the organizer (or delegate) at the venue after scanning the
+// attendee's QR code.  Atomically:
+//   1. Asserts the ticket is valid (commitment in ticket_commitments).
+//   2. Asserts the ticket has not already been used (not in used_tickets).
+//   3. Marks the ticket as used by inserting into used_tickets.
+//
+// Throws on invalid or already-used tickets so the organizer's app can
+// distinguish between "never issued", "already admitted", and "OK".
+// ---------------------------------------------------------------------------
+export circuit admit_ticket(): [] {
+  const caller_h: Bytes<32>   = persistentHash<Field>(caller_secret());
+  assert(disclose(caller_h == organizer) || delegates.member(disclose(caller_h)), "Not authorized");
+  const nonce: Field          = ticket_nonce();
+  const commitment: Bytes<32> = persistentHash<Field>(nonce);
+  assert(ticket_commitments.member(disclose(commitment)), "Ticket not found");
+  assert(!used_tickets.member(disclose(commitment)), "Ticket already used");
+  used_tickets.insert(disclose(commitment));
 }
 
 // ---------------------------------------------------------------------------
 // pause_event / resume_event
 //
-// Temporarily halts / restores ticket issuance.
+// Temporarily halts / restores ticket claiming.
 // Callable by the organizer or any registered delegate.
 // ---------------------------------------------------------------------------
 export circuit pause_event(): [] {
@@ -129,7 +177,7 @@ export circuit cancel_event(): [] {
 // ---------------------------------------------------------------------------
 // grant_delegate
 //
-// Adds a co-manager who can issue tickets, pause, resume, and cancel.
+// Adds a co-manager who can admit tickets, pause, resume, and cancel.
 // Only the organizer can call this.
 //
 // Flow:
