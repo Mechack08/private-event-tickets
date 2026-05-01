@@ -1380,6 +1380,7 @@ export default function NewEventPage() {
         longitude:       form.lng       ?? undefined,
         startDate:       startDateIso,
         endDate:         endDateIso,
+        minAge:          parseInt(form.minAge || "0", 10),
       });
 
       bumpProgress("key", "done");
