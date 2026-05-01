@@ -65,14 +65,14 @@ model Event {
 }
 
 // ── Ticket ────────────────────────────────────────────────────────────────────
-// Off-chain record of a ticket issued on-chain.
-// The cryptographic commitment is stored on-chain; we store the attendee
-// binding and useful metadata here for fast lookups.
+// Off-chain record of a ticket claimed on-chain.
+// The private nonce (ticket secret) NEVER leaves the attendee's browser.
+// We store the public blockchain txId as the unique claim identifier.
 model Ticket {
   id              String        @id @default(uuid()) @db.Uuid
-  // The ZK commitment hash that lives on-chain (hex string)
-  commitment      String        @unique @db.VarChar(128)
-  // Whether this ticket has been verified (spent) on-chain
+  // The on-chain transaction ID of the claim_ticket call (hex string, public)
+  claimTxId       String        @unique @db.VarChar(256)
+  // Whether this ticket has been admitted (used) on-chain
   isVerified      Boolean       @default(false)
   verifiedAt      DateTime?
   createdAt       DateTime      @default(now())
@@ -86,5 +86,5 @@ model Ticket {
 
   @@index([eventId])
   @@index([attendeeId])
-  @@index([commitment])
+  @@index([claimTxId])
 }

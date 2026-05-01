@@ -78,3 +78,14 @@ ALTER TABLE "Ticket" ADD CONSTRAINT "Ticket_eventId_fkey" FOREIGN KEY ("eventId"
 
 -- AddForeignKey
 ALTER TABLE "Ticket" ADD CONSTRAINT "Ticket_attendeeId_fkey" FOREIGN KEY ("attendeeId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- CreateTable (connect-pg-simple session store — not managed by Prisma schema)
+CREATE TABLE IF NOT EXISTS "sessions" (
+  "sid"    VARCHAR     NOT NULL COLLATE "default",
+  "sess"   JSON        NOT NULL,
+  "expire" TIMESTAMP(6) NOT NULL,
+  CONSTRAINT "sessions_pkey" PRIMARY KEY ("sid") NOT DEFERRABLE INITIALLY IMMEDIATE
+);
+
+-- CreateIndex
+CREATE INDEX IF NOT EXISTS "IDX_session_expire" ON "sessions" ("expire");
