@@ -64,6 +64,13 @@ const nextConfig: NextConfig = {
       asyncWebAssembly: true,
     };
 
+    // Tell webpack the output targets a modern browser that supports async/await.
+    // Without this, webpack emits a warning about asyncWebAssembly + async/await
+    // incompatibility even though every supported browser handles it fine.
+    if (!config.target || config.target === "web") {
+      config.target = ["web", "es2017"];
+    }
+
     // Register .wasm files from node_modules as async WebAssembly modules
     // (scoped to node_modules so it doesn't conflict with Next's edge-runtime wasm loader)
     config.module = config.module ?? {};
