@@ -475,3 +475,49 @@ export class EventTicketAPI {
   }
 }
 
+// ─── Read-only public state (no wallet required) ──────────────────────────
+
+/**
+ * Read an event contract's public ledger state using only the Midnight indexer.
+ * Does NOT require a connected wallet — safe to call on page load.
+ *
+ * @param contractAddress  On-chain address of the deployed event-tickets contract.
+ * @param config           Network config (only indexerUri / indexerWsUri are used).
+ */
+export async function readPublicState(
+  contractAddress: string,
+  config: { indexerUri: string; indexerWsUri: string },
+): Promise<EventState> {
+  const { indexerPublicDataProvider } = await import(
+    "@midnight-ntwrk/midnight-js-indexer-public-data-provider"
+  );
+  const publicDataProvider = indexerPublicDataProvider(
+    config.indexerUri,
+    config.indexerWsUri,
+  );
+  const mod = await getContractModule();
+
+  // queryContractState returns a deserialized ContractState (or null if not found).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const contractState = await (publicDataProvider as any).queryContractState(contractAddress);
+  if (!contractState) {
+    throw new Error(`Contract not found at address: ${contractAddress}`);
+  }
+
+  // ContractState.data returns the StateValue; mod.ledger() accepts a StateValue
+  // (it then wraps it in a ChargedState internally). Passing ContractState directly
+  // causes "expected instance of ChargedState" because it is not a ChargedState.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const raw = (mod as any).ledger(contractState.data) as LedgerView;
+
+  return {
+    organizer:     raw.organizer,
+    eventName:     bytes32ToString(raw.event_name),
+    totalTickets:  raw.total_tickets,
+    ticketsIssued: raw.tickets_issued,
+    isActive:      raw.is_active,
+    isCancelled:   raw.is_cancelled,
+    minAge:        raw.min_age,
+  };
+}
+
