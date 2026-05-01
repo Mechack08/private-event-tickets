@@ -28,12 +28,16 @@ export interface StoredEvent {
   endDate: string;
   /** Minimum attendee age for this event (0 = no restriction). */
   minAge?: number;
+  /** Off-chain claimed ticket count from the backend (display only, not stored). */
+  claimedCount?: number;
 }
 
 export interface SavedTicket {
   id: string;
   contractAddress: string;
   eventName: string;
+  /** The on-chain txId of the claim_ticket transaction (public — safe to store). */
+  claimTxId?: string;
   secret: { contractAddress: string; nonce: string };
   receivedAt: string;
 }

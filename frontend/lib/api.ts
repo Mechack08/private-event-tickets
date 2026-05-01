@@ -94,12 +94,6 @@ export const api = {
         method: "POST",
         body: JSON.stringify(data),
       }),
-
-    verify: (data: VerifyTicketInput) =>
-      request<TicketRecord>("/tickets/verify", {
-        method: "POST",
-        body: JSON.stringify(data),
-      }),
   },
 
 } as const;
@@ -120,6 +114,7 @@ export interface EventRecord {
   endDate: string | null;     // ISO string
   maxCapacity: number | null;
   minAge: number;             // minimum attendee age (0 = no restriction)
+  claimedCount: number;       // tickets claimed so far (from backend _count)
   isActive: boolean;
   hostId: string;
   createdAt: string;
@@ -146,7 +141,8 @@ export interface CreateEventInput {
 
 export interface TicketRecord {
   id: string;
-  commitment: string;
+  /** On-chain txId of the claim_ticket transaction (public). */
+  claimTxId: string;
   isVerified: boolean;
   verifiedAt: string | null;
   eventId: string;
@@ -155,12 +151,8 @@ export interface TicketRecord {
 }
 
 export interface IssueTicketInput {
-  commitment: string;
-  eventId: string;
-}
-
-export interface VerifyTicketInput {
-  commitment: string;
+  /** On-chain txId of the claim_ticket transaction (public — never the private nonce). */
+  claimTxId: string;
   eventId: string;
 }
 

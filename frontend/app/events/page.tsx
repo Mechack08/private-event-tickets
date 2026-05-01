@@ -30,6 +30,7 @@ function toCreateInput(event: StoredEvent) {
     startDate:       event.startDate   || now,
     endDate:         event.endDate     || now,
     maxCapacity:     event.totalTickets || 1,
+    minAge:          event.minAge ?? 0,
   };
 }
 
@@ -165,23 +166,61 @@ export default function EventsPage() {
               )}
             </div>
           ) : (
-            <div className="space-y-2">
-              {events.map((event) => (
-                <EventCard key={event.contractAddress} event={event} />
-              ))}
-              {localOnly.length > 0 && (
-                <>
-                  {events.length > 0 && (
-                    <p className="text-[11px] text-zinc-700 uppercase tracking-widest pt-4 pb-1 px-1">
-                      Your events (not yet in public list)
-                    </p>
+            (() => {
+              const now = new Date();
+              const happening = events.filter(e => {
+                const s = e.startDate ? new Date(e.startDate) : null;
+                const en = e.endDate  ? new Date(e.endDate)   : null;
+                return s && s <= now && (!en || en > now);
+              });
+              const upcoming = events.filter(e => {
+                const s = e.startDate ? new Date(e.startDate) : null;
+                return !s || s > now;
+              });
+              const past = events.filter(e => {
+                const en = e.endDate ? new Date(e.endDate) : null;
+                return en && en <= now;
+              });
+
+              return (
+                <div className="space-y-6">
+                  {happening.length > 0 && (
+                    <section>
+                      <p className="text-[11px] font-mono text-emerald-600 uppercase tracking-widest mb-2 px-1">Happening now</p>
+                      <div className="space-y-2">
+                        {happening.map((e) => <EventCard key={e.contractAddress} event={e} />)}
+                      </div>
+                    </section>
                   )}
-                  {localOnly.map((event) => (
-                    <LocalEventCard key={event.contractAddress} event={event} connected={connected} />
-                  ))}
-                </>
-              )}
-            </div>
+                  {upcoming.length > 0 && (
+                    <section>
+                      <p className="text-[11px] font-mono text-sky-700 uppercase tracking-widest mb-2 px-1">Upcoming</p>
+                      <div className="space-y-2">
+                        {upcoming.map((e) => <EventCard key={e.contractAddress} event={e} />)}
+                      </div>
+                    </section>
+                  )}
+                  {past.length > 0 && (
+                    <section>
+                      <p className="text-[11px] font-mono text-zinc-700 uppercase tracking-widest mb-2 px-1">Past</p>
+                      <div className="space-y-2">
+                        {past.map((e) => <EventCard key={e.contractAddress} event={e} />)}
+                      </div>
+                    </section>
+                  )}
+                  {localOnly.length > 0 && (
+                    <section>
+                      <p className="text-[11px] font-mono text-yellow-800 uppercase tracking-widest mb-2 px-1">
+                        Your events (not yet in public list)
+                      </p>
+                      <div className="space-y-2">
+                        {localOnly.map((e) => <LocalEventCard key={e.contractAddress} event={e} connected={connected} />)}
+                      </div>
+                    </section>
+                  )}
+                </div>
+              );
+            })()
           )}
         </div>
       </main>
@@ -203,19 +242,41 @@ function fmtShort(d: Date) {
   return `${date}, ${time}`;
 }
 
+type TimeStatus = "upcoming" | "now" | "past";
+
+function getTimeStatus(start: Date | null, end: Date | null): TimeStatus {
+  const now = new Date();
+  if (end && end < now) return "past";
+  if (start && start > now) return "upcoming";
+  return "now";
+}
+
+const STATUS_STYLE: Record<TimeStatus, { label: string; cls: string }> = {
+  now:      { label: "Happening now", cls: "text-emerald-400 border-emerald-500/25 bg-emerald-500/[0.06]" },
+  upcoming: { label: "Upcoming",      cls: "text-sky-400    border-sky-500/25    bg-sky-500/[0.06]" },
+  past:     { label: "Past",          cls: "text-zinc-600   border-zinc-700/40   bg-white/[0.02]" },
+};
+
 function EventCard({ event }: { event: EventRecord }) {
   const accent = nameToAccent(event.name);
-  const start = event.startDate ? new Date(event.startDate) : null;
-  const end   = event.endDate   ? new Date(event.endDate)   : null;
+  const start  = event.startDate ? new Date(event.startDate) : null;
+  const end    = event.endDate   ? new Date(event.endDate)   : null;
   const location = [event.city, event.country].filter(Boolean).join(", ") || event.location;
+  const status = getTimeStatus(start, end);
+  const claimed   = event.claimedCount ?? 0;
+  const capacity  = event.maxCapacity;
+  const remaining = capacity != null ? Math.max(0, capacity - claimed) : null;
 
   return (
     <Link
       href={`/events/${encodeURIComponent(event.contractAddress)}`}
-      className="group block border border-white/8 bg-white/[0.02] hover:bg-white/[0.04] transition-colors overflow-hidden"
+      className={[
+        "group block border bg-white/[0.02] hover:bg-white/[0.04] transition-colors overflow-hidden",
+        status === "past" ? "border-white/5 opacity-60 hover:opacity-80" : "border-white/8",
+      ].join(" ")}
     >
-      {/* Accent line — same hue as the event's generative poster */}
-      <div className="h-[2px]" style={{ background: accent }} />
+      {/* Accent line */}
+      <div className="h-[2px]" style={{ background: status === "past" ? accent + "50" : accent }} />
       <div className="px-5 py-4">
         <div className="flex items-start justify-between gap-3 mb-2.5">
           <p className="text-sm font-semibold text-white leading-snug group-hover:text-zinc-100 transition-colors">
@@ -242,10 +303,39 @@ function EventCard({ event }: { event: EventRecord }) {
               {fmtShort(start)}{end && end.toDateString() !== start.toDateString() ? ` – ${fmtShort(end)}` : ""}
             </span>
           )}
-          {event.maxCapacity != null && (
-            <span className="text-xs text-zinc-600 tabular-nums">{event.maxCapacity} seats</span>
+        </div>
+        {/* Badges row: status + FREE + age + capacity */}
+        <div className="flex flex-wrap items-center gap-1.5 mb-2.5">
+          <span className={`text-[10px] font-mono font-semibold border px-2 py-0.5 leading-none ${STATUS_STYLE[status].cls}`}>
+            {STATUS_STYLE[status].label}
+          </span>
+          <span className="text-[10px] font-mono font-semibold text-emerald-400 border border-emerald-500/25 bg-emerald-500/[0.06] px-2 py-0.5 leading-none">
+            FREE
+          </span>
+          {(event.minAge ?? 0) > 0 && (
+            <span className="text-[10px] font-mono font-semibold text-amber-400 border border-amber-500/25 bg-amber-500/[0.06] px-2 py-0.5 leading-none">
+              {event.minAge}+
+            </span>
+          )}
+          {capacity != null && (
+            <span className="text-[10px] font-mono text-zinc-600 border border-white/6 px-2 py-0.5 leading-none tabular-nums">
+              {remaining === 0 ? "Sold out" : remaining !== null ? `${remaining} left` : `${capacity} seats`}
+            </span>
           )}
         </div>
+        {capacity != null && claimed > 0 && (
+          <div className="mb-2">
+            <div className="h-px bg-white/[0.04] overflow-hidden">
+              <div
+                className="h-full bg-white/20 transition-all"
+                style={{ width: `${Math.min(100, (claimed / capacity) * 100)}%` }}
+              />
+            </div>
+            <p className="text-[10px] font-mono text-zinc-700 mt-1 tabular-nums">
+              {claimed} / {capacity} claimed
+            </p>
+          </div>
+        )}
         <p className="text-[10px] font-mono text-zinc-700 truncate">{event.contractAddress}</p>
       </div>
     </Link>
@@ -260,6 +350,7 @@ function LocalEventCard({ event, connected }: { event: StoredEvent; connected: b
   const start = event.startDate ? new Date(event.startDate) : null;
   const end   = event.endDate   ? new Date(event.endDate)   : null;
   const location = [event.city, event.country].filter(Boolean).join(", ") || event.location;
+  const status = getTimeStatus(start, end);
 
   async function handleSync(e: React.MouseEvent) {
     e.preventDefault();
@@ -308,6 +399,19 @@ function LocalEventCard({ event, connected }: { event: StoredEvent; connected: b
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5" />
                 </svg>
                 {fmtShort(start)}{end && end.toDateString() !== start.toDateString() ? ` – ${fmtShort(end)}` : ""}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-1.5 mb-2">
+            <span className={`text-[10px] font-mono font-semibold border px-2 py-0.5 leading-none ${STATUS_STYLE[status].cls}`}>
+              {STATUS_STYLE[status].label}
+            </span>
+            <span className="text-[10px] font-mono font-semibold text-emerald-400 border border-emerald-500/25 bg-emerald-500/[0.06] px-2 py-0.5 leading-none">
+              FREE
+            </span>
+            {(event.minAge ?? 0) > 0 && (
+              <span className="text-[10px] font-mono font-semibold text-amber-400 border border-amber-500/25 bg-amber-500/[0.06] px-2 py-0.5 leading-none">
+                {event.minAge}+
               </span>
             )}
           </div>
