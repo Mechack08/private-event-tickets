@@ -238,7 +238,7 @@ export default function HomePage() {
       <Nav />
 
       {/* Subtle grid background — static, non-distracting */}
-      <div className="pointer-events-none fixed inset-0 grid-lines opacity-100" aria-hidden />
+      <div className="pointer-events-none fixed inset-0 -z-10 grid-lines opacity-100" aria-hidden />
 
       <main className="relative z-10 min-h-dvh pt-14">
         {/* ── HERO ─────────────────────────────────────────────────── */}
