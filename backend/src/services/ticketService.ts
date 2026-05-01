@@ -3,7 +3,8 @@ import { createError } from "../middleware/errorHandler.js";
 import type { Ticket } from "@prisma/client";
 
 export interface IssueTicketInput {
-  commitment: string;
+  /** The on-chain txId of the claim_ticket transaction (public — safe to store). */
+  claimTxId: string;
   eventId: string;
 }
 
@@ -12,10 +13,10 @@ export async function issueTicket(
   input: IssueTicketInput
 ): Promise<Ticket> {
   const existing = await prisma.ticket.findUnique({
-    where: { commitment: input.commitment },
+    where: { claimTxId: input.claimTxId },
   });
   if (existing) {
-    throw createError("A ticket with that commitment already exists.", 409);
+    throw createError("A ticket with that claimTxId already exists.", 409);
   }
 
   // Verify the event exists
@@ -25,20 +26,20 @@ export async function issueTicket(
 
   return prisma.ticket.create({
     data: {
-      commitment: input.commitment,
+      claimTxId: input.claimTxId,
       eventId: input.eventId,
       attendeeId,
     },
   });
 }
 
-export async function markTicketVerified(commitment: string): Promise<Ticket> {
-  const ticket = await prisma.ticket.findUnique({ where: { commitment } });
+export async function markTicketAdmitted(claimTxId: string): Promise<Ticket> {
+  const ticket = await prisma.ticket.findUnique({ where: { claimTxId } });
   if (!ticket) throw createError("Ticket not found.", 404);
-  if (ticket.isVerified) throw createError("Ticket already verified.", 409);
+  if (ticket.isVerified) throw createError("Ticket already admitted.", 409);
 
   return prisma.ticket.update({
-    where: { commitment },
+    where: { claimTxId },
     data: { isVerified: true, verifiedAt: new Date() },
   });
 }

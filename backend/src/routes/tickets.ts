@@ -4,7 +4,7 @@ import { requireAuth } from "../middleware/requireAuth.js";
 import { createError } from "../middleware/errorHandler.js";
 import {
   issueTicket,
-  markTicketVerified,
+  markTicketAdmitted,
   getMyTickets,
   getTicketsByEvent,
 } from "../services/ticketService.js";
@@ -14,21 +14,16 @@ import type { SocketServer } from "../socket.js";
 export function createTicketsRouter(io: SocketServer): Router {
   const router = Router();
 
+  // Accept any non-empty string for the on-chain txId (hex, no fixed format enforced).
+  const txIdString = z.string().min(10).max(256);
+
   const issueSchema = z.object({
-    commitment: z
-      .string()
-      .min(10)
-      .max(128)
-      .regex(/^[0-9a-f]+$/i, "commitment must be a hex string"),
+    claimTxId: txIdString,
     eventId: z.string().uuid(),
   });
 
-  const verifySchema = z.object({
-    commitment: z
-      .string()
-      .min(10)
-      .max(128)
-      .regex(/^[0-9a-f]+$/i, "commitment must be a hex string"),
+  const admitSchema = z.object({
+    claimTxId: txIdString,
   });
 
   /**
@@ -74,7 +69,7 @@ export function createTicketsRouter(io: SocketServer): Router {
       io.to(`event:${ticket.eventId}`).emit("ticket:issued", {
         ticketId: ticket.id,
         eventId: ticket.eventId,
-        commitment: ticket.commitment,
+        claimTxId: ticket.claimTxId,
         issuedAt: ticket.createdAt,
       });
 
@@ -85,22 +80,22 @@ export function createTicketsRouter(io: SocketServer): Router {
   });
 
   /**
-   * POST /tickets/verify
-   * Mark a ticket as verified (called by the organiser after on-chain ZK proof succeeds).
+   * POST /tickets/admit
+   * Mark a ticket as admitted after the organizer scans the QR at the venue.
    */
-  router.post("/verify", requireAuth, async (req, res, next) => {
+  router.post("/admit", requireAuth, async (req, res, next) => {
     try {
-      const parsed = verifySchema.safeParse(req.body);
+      const parsed = admitSchema.safeParse(req.body);
       if (!parsed.success) {
         throw createError(parsed.error.issues[0]!.message, 422);
       }
 
-      const ticket = await markTicketVerified(parsed.data.commitment);
+      const ticket = await markTicketAdmitted(parsed.data.claimTxId);
 
-      io.to(`event:${ticket.eventId}`).emit("ticket:verified", {
+      io.to(`event:${ticket.eventId}`).emit("ticket:admitted", {
         ticketId: ticket.id,
         eventId: ticket.eventId,
-        commitment: ticket.commitment,
+        claimTxId: ticket.claimTxId,
         verifiedAt: ticket.verifiedAt,
       });
 

@@ -18,18 +18,18 @@ interface ClientToServerEvents {
 }
 
 interface ServerToClientEvents {
-  /** Emitted when a new ticket commitment is registered */
+  /** Emitted when a new ticket claim is registered */
   "ticket:issued": (payload: {
     ticketId: string;
     eventId: string;
-    commitment: string;
+    claimTxId: string;
     issuedAt: Date;
   }) => void;
-  /** Emitted when a ticket is verified on-chain */
-  "ticket:verified": (payload: {
+  /** Emitted when a ticket is admitted (scanned) at the venue */
+  "ticket:admitted": (payload: {
     ticketId: string;
     eventId: string;
-    commitment: string;
+    claimTxId: string;
     verifiedAt: Date | null;
   }) => void;
   /** Emitted when event metadata is updated */

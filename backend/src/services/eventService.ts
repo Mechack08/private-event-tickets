@@ -2,6 +2,9 @@ import { prisma } from "../lib/prisma.js";
 import { createError } from "../middleware/errorHandler.js";
 import type { Event } from "@prisma/client";
 
+/** Event with off-chain ticket claim count included. */
+export type EventWithCount = Event & { claimedCount: number };
+
 export interface CreateEventInput {
   contractAddress: string;
   name: string;
@@ -60,17 +63,25 @@ export async function createEvent(
   });
 }
 
-export async function listEvents(activeOnly = true): Promise<Event[]> {
-  return prisma.event.findMany({
+export async function listEvents(activeOnly = true): Promise<EventWithCount[]> {
+  const events = await prisma.event.findMany({
     where: activeOnly ? { isActive: true } : undefined,
     orderBy: { startDate: "asc" },
+    include: { _count: { select: { tickets: true } } },
   });
+  return events.map(({ _count, ...e }) => ({ ...e, claimedCount: _count.tickets }));
 }
 
 export async function getEventByAddress(
   contractAddress: string
-): Promise<Event | null> {
-  return prisma.event.findUnique({ where: { contractAddress } });
+): Promise<EventWithCount | null> {
+  const event = await prisma.event.findUnique({
+    where: { contractAddress },
+    include: { _count: { select: { tickets: true } } },
+  });
+  if (!event) return null;
+  const { _count, ...rest } = event;
+  return { ...rest, claimedCount: _count.tickets };
 }
 
 export async function getEventById(id: string): Promise<Event | null> {
