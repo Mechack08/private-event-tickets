@@ -23,7 +23,7 @@ import { levelPrivateStateProvider } from "@midnight-ntwrk/midnight-js-level-pri
 import { createProofProvider } from "@midnight-ntwrk/midnight-js-types";
 import type { MidnightProviders, WalletProvider, MidnightProvider, UnboundTransaction } from "@midnight-ntwrk/midnight-js-types";
 import { toHex, fromHex, parseCoinPublicKeyToHex, parseEncPublicKeyToHex } from "@midnight-ntwrk/midnight-js-utils";
-import type { WalletConnectedAPI, KeyMaterialProvider } from "@midnight-ntwrk/dapp-connector-api";
+import type { WalletConnectedAPI, ConnectedAPI, KeyMaterialProvider } from "@midnight-ntwrk/dapp-connector-api";
 import { Transaction } from "@midnight-ntwrk/ledger-v8";
 import type { FinalizedTransaction } from "@midnight-ntwrk/ledger-v8";
 import type { NetworkConfig } from "./types.js";
@@ -84,14 +84,52 @@ export async function createEventTicketProviders(
     config.indexerWsUri,
   );
 
-  // ── Proof provider (wallet-delegated ZK proving) ──────────────────────
-  // The wallet generates ZK proofs internally — no external proof server
-  // Docker container is required.  FetchZkConfigProvider is structurally
-  // compatible with the KeyMaterialProvider interface expected by the wallet.
-  const provingProvider = await wallet.getProvingProvider(
-    zkConfigProvider as unknown as KeyMaterialProvider,
-  );
-  const proofProvider = createProofProvider(provingProvider);
+  // ── Proof provider ────────────────────────────────────────────────────
+  // Priority order:
+  //   1. wallet.getProvingProvider()  — wallet-delegated (Lace v4+, ideal)
+  //   2. Local Docker proof server via /api/proof proxy (localhost:6300)
+  //
+  // NOTE: wallet.getConfiguration().proverServerUri returns Lace's hosted
+  // proof server, but it is auth-gated — direct calls return 403.  Only
+  // Lace's own extension can call it.  We always fall back to Docker.
+
+  const connectedApi = wallet as unknown as ConnectedAPI;
+  if (typeof connectedApi.hintUsage === "function") {
+    await connectedApi.hintUsage([
+      "getProvingProvider",
+      "balanceUnsealedTransaction",
+      "submitTransaction",
+    ]);
+  }
+
+  let proofProvider: ReturnType<typeof createProofProvider>;
+
+  if (typeof (wallet as any).getProvingProvider === "function") {
+    // ── Path A: wallet-delegated ZK proving (Lace v4+) ───────────────
+    const provingProvider = await wallet.getProvingProvider(
+      zkConfigProvider.asKeyMaterialProvider(),
+    );
+    proofProvider = createProofProvider(provingProvider);
+  } else {
+    // ── Path B: local Docker proof server via /api/proof CORS proxy ──
+    // Lace's hosted proverServerUri requires their internal auth (returns
+    // 403 when called by a dapp).  Use a local Docker container instead:
+    //   docker run -d --rm -p 6300:6300 midnightntwrk/proof-server
+    //
+    // The /api/proof Next.js route forwards requests to localhost:6300
+    // server-side, avoiding browser CORS restrictions.
+    console.info(
+      "[midnight] wallet.getProvingProvider not available — " +
+      "using local Docker proof server via /api/proof proxy",
+    );
+
+    const { createProofServerProvingProvider } = await import("./proof-server-provider");
+    const provingProvider = createProofServerProvingProvider(
+      zkConfigProvider.asKeyMaterialProvider(),
+      "/api/proof",   // proxy → localhost:6300 (no X-Proof-Server → uses default)
+    );
+    proofProvider = createProofProvider(provingProvider);
+  }
 
   // ── Wallet provider (tx balancing + public key access) ────────────────
   // Bridges the dApp Connector's string-serialized tx API to the typed
