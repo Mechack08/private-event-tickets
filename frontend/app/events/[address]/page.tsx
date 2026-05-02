@@ -16,6 +16,7 @@ import {
   saveCallerSecret,
   saveTicket,
   getMyTickets,
+  markTicketUsed,
   type StoredEvent,
 } from "@/lib/storage";
 import { api as backendApi, type TicketRecord } from "@/lib/api";
@@ -468,12 +469,18 @@ function OrganizerView({
   const [admitMode, setAdmitMode] = useState<"scan" | "manual">("manual");
   const [nonceInput, setNonceInput] = useState("");
   const [admitting, setAdmitting] = useState(false);
+  const [admitRetry, setAdmitRetry] = useState<{ attempt: number; max: number } | null>(null);
   const [admitResult, setAdmitResult] = useState<"success" | "error" | null>(null);
   const [admitError, setAdmitError] = useState<string | null>(null);
   const [lastAdmittedAt, setLastAdmittedAt] = useState<Date | null>(null);
+  const [lastAdmittedNonce, setLastAdmittedNonce] = useState<string | null>(null);
   const [scanActive, setScanActive] = useState(false);
   const [cameraPermissionDenied, setCameraPermissionDenied] = useState(false);
   const [pendingNonce, setPendingNonce] = useState<string | null>(null);
+  // claimTxId extracted from QR — used to update the backend ticket record after admit.
+  const [pendingClaimTxId, setPendingClaimTxId] = useState<string | null>(null);
+  // Session-local set of admitted nonces — survives tab changes but not page refresh.
+  const [admittedNonces, setAdmittedNonces] = useState<Set<string>>(new Set());
 
   // ── Event status ─────────────────────────────────────────────────────────
   const [eventStatus, setEventStatus] = useState<EventStatus>("active");
@@ -545,37 +552,62 @@ function OrganizerView({
     }
   }
 
-  async function submitAdmit(rawNonce: string) {
+  async function submitAdmit(rawNonce: string, claimTxId?: string | null) {
     const trimmed = rawNonce.trim();
     if (!trimmed || admitting) return;
     setAdmitting(true);
     setAdmitResult(null);
     setAdmitError(null);
+    setAdmitRetry(null);
     setScanActive(false);
-    try {
-      const contractApi = await buildApi();
-      const { hexToBigint } = await import("@sdk/contract-api");
-      const nonce = hexToBigint(trimmed.startsWith("0x") ? trimmed : `0x${trimmed}`);
-      await contractApi.admitTicket(nonce);
-      setAdmitResult("success");
-      setLastAdmittedAt(new Date());
-      setNonceInput("");
-      // Refresh ticket list
-      if (backendEventId) {
-        backendApi.tickets.byEvent(backendEventId).then(setTickets).catch(() => {});
+
+    const MAX_RETRIES = 3;
+    const RETRY_DELAY_MS = 4_000; // give the wallet time to sync
+
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const contractApi = await buildApi();
+        const { hexToBigint } = await import("@sdk/contract-api");
+        const nonce = hexToBigint(trimmed.startsWith("0x") ? trimmed : `0x${trimmed}`);
+        await contractApi.admitTicket(nonce);
+        setAdmitResult("success");
+        setAdmitRetry(null);
+        setLastAdmittedAt(new Date());
+        setLastAdmittedNonce(trimmed);
+        setAdmittedNonces((prev) => new Set([...prev, trimmed]));
+        setNonceInput("");
+        // Update the backend ticket record (non-fatal — on-chain tx already succeeded).
+        if (claimTxId) {
+          backendApi.tickets.admit(claimTxId).catch(() => {});
+        }
+        // Refresh ticket list
+        if (backendEventId) {
+          backendApi.tickets.byEvent(backendEventId).then(setTickets).catch(() => {});
+        }
+        setAdmitting(false);
+        return;
+      } catch (err) {
+        lastErr = err;
+        const msg = err instanceof Error ? err.message : String(err);
+        const isTimeout = msg.toLowerCase().includes("timed out") || msg.toLowerCase().includes("timeout");
+        // Only retry on transient timeout errors; stop immediately for "already used" and other logic errors
+        if (!isTimeout || attempt === MAX_RETRIES) break;
+        setAdmitRetry({ attempt, max: MAX_RETRIES });
+        await new Promise<void>((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
       }
-    } catch (err) {
-      setAdmitResult("error");
-      setAdmitError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setAdmitting(false);
     }
+
+    setAdmitRetry(null);
+    setAdmitResult("error");
+    setAdmitError(lastErr instanceof Error ? lastErr.message : String(lastErr));
+    setAdmitting(false);
   }
 
   function handleQrScan(raw: string): boolean {
-    // Only accept our ticket format: {"contractAddress":"…","nonce":"0x…"}
+    // Only accept our ticket format: {"contractAddress":"…","nonce":"0x…"[,"claimTxId":"…"]}
     try {
-      const parsed = JSON.parse(raw) as { contractAddress?: string; nonce?: string };
+      const parsed = JSON.parse(raw) as { contractAddress?: string; nonce?: string; claimTxId?: string };
       if (
         typeof parsed.contractAddress === "string" &&
         typeof parsed.nonce === "string" &&
@@ -583,6 +615,7 @@ function OrganizerView({
       ) {
         setScanActive(false);
         setPendingNonce(parsed.nonce);
+        setPendingClaimTxId(typeof parsed.claimTxId === "string" ? parsed.claimTxId : null);
         return true; // consumed — stop scanning
       }
     } catch { /* not JSON — ignore */ }
@@ -596,6 +629,7 @@ function OrganizerView({
     setAdmitError(null);
     setNonceInput("");
     setPendingNonce(null);
+    setPendingClaimTxId(null);
     setScanActive(admitMode === "scan");
   }
 
@@ -699,6 +733,11 @@ function OrganizerView({
                       {lastAdmittedAt.toLocaleTimeString("en-GB")}
                     </p>
                   )}
+                  {lastAdmittedNonce && (
+                    <p className="text-[10px] font-mono text-zinc-700 mt-0.5">
+                      {lastAdmittedNonce.slice(0, 12)}…{lastAdmittedNonce.slice(-8)}
+                    </p>
+                  )}
                 </div>
                 <button
                   onClick={resetAdmit}
@@ -712,26 +751,47 @@ function OrganizerView({
 
           {/* Error state */}
           <AnimatePresence>
-            {admitResult === "error" && admitError && (
-              <motion.div
-                initial={{ opacity: 0, y: 6 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }}
-                className="border border-red-500/20 bg-red-500/[0.04] px-4 py-4 space-y-3"
-              >
-                <div className="flex items-center gap-2">
-                  <svg className="w-4 h-4 text-red-400 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" />
-                  </svg>
-                  <p className="text-sm font-semibold text-red-400">Admission failed</p>
-                </div>
-                <p className="text-xs text-red-300/70 break-all leading-relaxed">{admitError}</p>
-                <button onClick={resetAdmit}
-                  className="text-xs text-zinc-400 hover:text-white border border-white/8 hover:border-white/20 px-3 py-1.5 transition-colors">
-                  Try again
-                </button>
-              </motion.div>
-            )}
+            {admitResult === "error" && admitError && (() => {
+              const isAlreadyUsed =
+                admitError.toLowerCase().includes("already used") ||
+                admitError.toLowerCase().includes("ticket already");
+              return (
+                <motion.div
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0 }}
+                  className={`border px-4 py-4 space-y-3 ${
+                    isAlreadyUsed
+                      ? "border-amber-500/25 bg-amber-500/[0.05]"
+                      : "border-red-500/20 bg-red-500/[0.04]"
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    {isAlreadyUsed ? (
+                      <svg className="w-4 h-4 text-amber-400 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+                      </svg>
+                    ) : (
+                      <svg className="w-4 h-4 text-red-400 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" />
+                      </svg>
+                    )}
+                    <p className={`text-sm font-semibold ${isAlreadyUsed ? "text-amber-400" : "text-red-400"}`}>
+                      {isAlreadyUsed ? "Ticket already admitted" : "Admission failed"}
+                    </p>
+                  </div>
+                  <p className={`text-xs leading-relaxed ${isAlreadyUsed ? "text-amber-300/60" : "text-red-300/70 break-all"}`}>
+                    {isAlreadyUsed
+                      ? "This ticket has already been scanned and admitted at the venue. Do not let this attendee in again."
+                      : admitError}
+                  </p>
+                  <button onClick={resetAdmit}
+                    className="text-xs text-zinc-400 hover:text-white border border-white/8 hover:border-white/20 px-3 py-1.5 transition-colors">
+                    {isAlreadyUsed ? "Scan next ticket →" : "Try again"}
+                  </button>
+                </motion.div>
+              );
+            })()}
           </AnimatePresence>
 
           {/* Main admit UI (hidden while showing result) */}
@@ -822,7 +882,11 @@ function OrganizerView({
                         </div>
                       </div>
                       <p className="text-xs text-zinc-600 text-center">
-                        {admitting ? "Submitting ZK proof…" : "Point camera at attendee's ticket QR code"}
+                        {admitting
+                          ? admitRetry
+                            ? `Wallet syncing, retrying… (${admitRetry.attempt}/${admitRetry.max})`
+                            : "Submitting ZK proof…"
+                          : "Point camera at attendee's ticket QR code"}
                       </p>
                     </motion.div>
                   ) : (
@@ -833,10 +897,18 @@ function OrganizerView({
                       animate={{ opacity: 1, y: 0, scale: 1 }}
                       exit={{ opacity: 0, y: -10 }}
                       transition={{ type: "spring", stiffness: 360, damping: 30 }}
-                      className="border border-emerald-500/25 bg-emerald-500/[0.04] overflow-hidden"
+                      className={`border overflow-hidden ${
+                        admittedNonces.has(pendingNonce)
+                          ? "border-amber-500/25 bg-amber-500/[0.04]"
+                          : "border-emerald-500/25 bg-emerald-500/[0.04]"
+                      }`}
                     >
                       <motion.div
-                        className="h-0.5 bg-gradient-to-r from-emerald-500 to-teal-400"
+                        className={`h-0.5 bg-gradient-to-r ${
+                          admittedNonces.has(pendingNonce)
+                            ? "from-amber-500 to-yellow-400"
+                            : "from-emerald-500 to-teal-400"
+                        }`}
                         initial={{ scaleX: 0, originX: 0 }}
                         animate={{ scaleX: 1 }}
                         transition={{ delay: 0.12, duration: 0.35, ease: "easeOut" }}
@@ -847,19 +919,38 @@ function OrganizerView({
                             initial={{ scale: 0 }}
                             animate={{ scale: 1 }}
                             transition={{ type: "spring", stiffness: 420, damping: 18, delay: 0.14 }}
-                            className="w-9 h-9 rounded-full bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center shrink-0"
+                            className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${
+                              admittedNonces.has(pendingNonce)
+                                ? "bg-amber-500/15 border border-amber-500/30"
+                                : "bg-emerald-500/15 border border-emerald-500/30"
+                            }`}
                           >
-                            <svg className="w-4.5 h-4.5 text-emerald-400" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75" />
-                            </svg>
+                            {admittedNonces.has(pendingNonce) ? (
+                              <svg className="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" />
+                              </svg>
+                            ) : (
+                              <svg className="w-4.5 h-4.5 text-emerald-400" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75" />
+                              </svg>
+                            )}
                           </motion.div>
                           <motion.div
                             initial={{ opacity: 0, x: -6 }}
                             animate={{ opacity: 1, x: 0 }}
                             transition={{ delay: 0.2, duration: 0.22 }}
                           >
-                            <p className="text-sm font-semibold text-white">Ticket scanned</p>
-                            <p className="text-[11px] text-zinc-500">Valid ticket — confirm to admit</p>
+                            {admittedNonces.has(pendingNonce) ? (
+                              <>
+                                <p className="text-sm font-semibold text-amber-400">Already admitted</p>
+                                <p className="text-[11px] text-zinc-500">This ticket was admitted earlier this session</p>
+                              </>
+                            ) : (
+                              <>
+                                <p className="text-sm font-semibold text-white">Ticket scanned</p>
+                                <p className="text-[11px] text-zinc-500">Valid ticket — confirm to admit</p>
+                              </>
+                            )}
                           </motion.div>
                         </div>
                         <motion.div
@@ -883,15 +974,17 @@ function OrganizerView({
                             onClick={() => { setPendingNonce(null); setScanActive(true); }}
                             className="flex-1 text-xs text-zinc-400 hover:text-white border border-white/8 hover:border-white/20 py-3 transition-colors"
                           >
-                            Re-scan
+                            {admittedNonces.has(pendingNonce) ? "Scan next →" : "Re-scan"}
                           </button>
-                          <button
-                            onClick={() => submitAdmit(pendingNonce)}
-                            disabled={isCancelled}
-                            className="flex-1 bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-bold py-3 disabled:opacity-30 transition-colors"
-                          >
-                            Confirm Admit
-                          </button>
+                          {!admittedNonces.has(pendingNonce) && (
+                            <button
+                              onClick={() => submitAdmit(pendingNonce, pendingClaimTxId)}
+                              disabled={isCancelled}
+                              className="flex-1 bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-bold py-3 disabled:opacity-30 transition-colors"
+                            >
+                              Confirm Admit
+                            </button>
+                          )}
                         </motion.div>
                       </div>
                     </motion.div>
@@ -926,7 +1019,11 @@ function OrganizerView({
                     disabled={admitting || !nonceInput.trim() || isCancelled}
                     className="w-full bg-white text-black text-sm font-semibold py-3 hover:bg-zinc-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                   >
-                    {admitting ? "Submitting ZK proof…" : isCancelled ? "Event is cancelled" : "Admit Attendee"}
+                    {admitting
+                      ? admitRetry
+                        ? `Wallet syncing, retrying… (${admitRetry.attempt}/${admitRetry.max})`
+                        : "Submitting ZK proof…"
+                      : isCancelled ? "Event is cancelled" : "Admit Attendee"}
                   </button>
                 </div>
               )}
@@ -1155,6 +1252,19 @@ function AttendeeView({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [address]);
 
+  // Silent admission sync — check if this ticket was admitted since last visit.
+  useEffect(() => {
+    if (savedTicket?.isUsed) return; // already known
+    backendApi.tickets.mine().then((backendTickets) => {
+      const bt = backendTickets.find((t) => t.claimTxId === savedTicket?.claimTxId);
+      if (bt?.isVerified && savedTicket) {
+        markTicketUsed(savedTicket.id, bt.verifiedAt ?? undefined);
+        setSavedTicket({ ...savedTicket, isUsed: true, usedAt: bt.verifiedAt ?? new Date().toISOString() });
+      }
+    }).catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function handleClaim(e: React.FormEvent) {
     e.preventDefault();
     if (!dob) return;
@@ -1218,7 +1328,12 @@ function AttendeeView({
   }
 
   if (savedTicket) {
-    const qrValue = JSON.stringify(savedTicket.secret);
+    const qrValue = JSON.stringify(
+      savedTicket.claimTxId
+        ? { ...savedTicket.secret, claimTxId: savedTicket.claimTxId }
+        : savedTicket.secret,
+    );
+    const admittedDate = savedTicket.usedAt ? new Date(savedTicket.usedAt) : null;
     return (
       <motion.div
         initial={{ opacity: 0 }}
@@ -1234,7 +1349,7 @@ function AttendeeView({
           className="mb-5"
         >
           <p className="text-[10px] font-mono font-semibold text-zinc-600 uppercase tracking-widest mb-1">Your ticket</p>
-          <h2 className="text-lg font-bold text-white">{savedTicket.eventName}</h2>
+          <h2 className={`text-lg font-bold ${savedTicket.isUsed ? "text-zinc-400" : "text-white"}`}>{savedTicket.eventName}</h2>
         </motion.div>
 
         {/* Ticket stub */}
@@ -1242,7 +1357,11 @@ function AttendeeView({
           initial={{ opacity: 0, y: 32, scale: 0.97 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
           transition={{ type: "spring", stiffness: 300, damping: 28, delay: 0.1 }}
-          className="relative border border-white/10 bg-white/[0.02] overflow-hidden"
+          className={`relative border overflow-hidden transition-colors ${
+            savedTicket.isUsed
+              ? "border-amber-500/20 bg-amber-500/[0.03]"
+              : "border-white/10 bg-white/[0.02]"
+          }`}
         >
           {/* Top accent bar */}
           <motion.div
@@ -1250,53 +1369,110 @@ function AttendeeView({
             animate={{ scaleX: 1 }}
             transition={{ delay: 0.35, duration: 0.5, ease: "easeOut" }}
             style={{ originX: 0 }}
-            className="h-px bg-gradient-to-r from-emerald-500/60 via-white/20 to-transparent"
+            className={`h-px bg-gradient-to-r ${
+              savedTicket.isUsed
+                ? "from-amber-500/60 via-amber-400/20 to-transparent"
+                : "from-emerald-500/60 via-white/20 to-transparent"
+            }`}
           />
 
           {/* QR area */}
           <div className="flex flex-col items-center gap-0 px-6 pt-7 pb-5">
-            {/* Glow ring behind QR */}
-            <div className="relative">
-              <motion.div
-                initial={{ scale: 0.7, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                transition={{ delay: 0.2, type: "spring", stiffness: 280, damping: 22 }}
-                className="relative z-10 bg-white p-4"
-              >
-                <QRCode value={qrValue} size={180} />
-              </motion.div>
-              {/* Pulse glow */}
-              <motion.div
-                initial={{ scale: 0.9, opacity: 0 }}
-                animate={{ scale: [0.9, 1.12, 0.9], opacity: [0, 0.15, 0] }}
-                transition={{ delay: 0.45, duration: 1.8, repeat: 2, ease: "easeInOut" }}
-                className="absolute inset-0 bg-white blur-xl pointer-events-none"
-              />
-            </div>
+            {savedTicket.isUsed ? (
+              /* ══ ADMITTED STATE ════════════════════════════════════ */
+              <>
+                {/* Void QR + rubber stamp */}
+                <div className="relative w-[212px] h-[212px] bg-zinc-900 border border-amber-500/15 flex items-center justify-center">
+                  {/* desaturated QR underneath */}
+                  <div style={{ filter: "grayscale(1) opacity(0.15)" }}>
+                    <QRCode value={qrValue} size={176} />
+                  </div>
+                  {/* Animated circular stamp */}
+                  <motion.div
+                    initial={{ scale: 2.2, opacity: 0, rotate: -28 }}
+                    animate={{ scale: 1, opacity: 1, rotate: -14 }}
+                    transition={{ type: "spring", stiffness: 500, damping: 24 }}
+                    className="absolute inset-0 flex items-center justify-center"
+                  >
+                    <div className="relative flex items-center justify-center w-[168px] h-[168px]">
+                      <div className="absolute inset-0 rounded-full border-[3px] border-amber-400/85 shadow-[0_0_30px_rgba(245,158,11,0.22)]" />
+                      <div className="absolute inset-[7px] rounded-full border border-amber-400/30" />
+                      <div className="flex flex-col items-center gap-0.5 z-10">
+                        <p className="text-amber-400 font-black text-[21px] leading-none tracking-[0.32em]">ADMITTED</p>
+                        <div className="w-[88px] h-px bg-amber-400/50 my-1.5" />
+                        <p className="text-amber-400/65 text-[9px] font-bold tracking-[0.28em] uppercase">Entry Granted</p>
+                        {admittedDate && (
+                          <p className="text-amber-400/45 text-[9px] font-mono mt-1.5">
+                            {admittedDate.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </motion.div>
+                </div>
 
-            {/* Checkmark badge */}
-            <motion.div
-              initial={{ scale: 0, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              transition={{ delay: 0.5, type: "spring", stiffness: 500, damping: 22 }}
-              className="mt-4 flex items-center gap-2 border border-emerald-500/30 bg-emerald-500/[0.07] px-3 py-1.5"
-            >
-              <svg className="w-3 h-3 text-emerald-400 shrink-0" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-              </svg>
-              <span className="text-[10px] font-mono font-semibold text-emerald-400 tracking-widest uppercase">
-                ZK proof verified · on-chain
-              </span>
-            </motion.div>
+                {/* Admission record strip */}
+                <div className="w-full border border-t-0 border-amber-500/15 bg-amber-500/[0.05] px-4 py-3 flex items-center gap-3">
+                  <div className="w-7 h-7 rounded-full border border-amber-500/35 bg-amber-500/10 flex items-center justify-center shrink-0">
+                    <svg width="12" height="10" viewBox="0 0 12 10" fill="none">
+                      <path d="M1 5L4.5 8.5L11 1" stroke="rgb(251 191 36)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-amber-400/85">Admitted at venue</p>
+                    <p className="text-[11px] text-zinc-500 mt-0.5">
+                      {admittedDate ? admittedDate.toLocaleString() : "Admission recorded on-chain"}
+                    </p>
+                  </div>
+                </div>
+              </>
+            ) : (
+              /* ══ VALID TICKET QR ══════════════════════════════════ */
+              <>
+                {/* Glow ring behind QR */}
+                <div className="relative">
+                  <motion.div
+                    initial={{ scale: 0.7, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    transition={{ delay: 0.2, type: "spring", stiffness: 280, damping: 22 }}
+                    className="relative z-10 bg-white p-4"
+                  >
+                    <QRCode value={qrValue} size={180} />
+                  </motion.div>
+                  {/* Pulse glow */}
+                  <motion.div
+                    initial={{ scale: 0.9, opacity: 0 }}
+                    animate={{ scale: [0.9, 1.12, 0.9], opacity: [0, 0.15, 0] }}
+                    transition={{ delay: 0.45, duration: 1.8, repeat: 2, ease: "easeInOut" }}
+                    className="absolute inset-0 bg-white blur-xl pointer-events-none"
+                  />
+                </div>
 
-            <motion.p
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: 0.6 }}
-              className="text-xs text-zinc-600 text-center mt-3"
-            >
-              Show this QR code at the venue entrance
-            </motion.p>
+                {/* Checkmark badge */}
+                <motion.div
+                  initial={{ scale: 0, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  transition={{ delay: 0.5, type: "spring", stiffness: 500, damping: 22 }}
+                  className="mt-4 flex items-center gap-2 border border-emerald-500/30 bg-emerald-500/[0.07] px-3 py-1.5"
+                >
+                  <svg className="w-3 h-3 text-emerald-400 shrink-0" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                  </svg>
+                  <span className="text-[10px] font-mono font-semibold text-emerald-400 tracking-widest uppercase">
+                    ZK proof verified · on-chain
+                  </span>
+                </motion.div>
+
+                <motion.p
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: 0.6 }}
+                  className="text-xs text-zinc-600 text-center mt-3"
+                >
+                  Show this QR code at the venue entrance
+                </motion.p>
+              </>
+            )}
           </div>
 
           {/* Perforated separator */}
