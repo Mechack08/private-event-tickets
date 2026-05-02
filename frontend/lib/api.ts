@@ -94,6 +94,13 @@ export const api = {
         method: "POST",
         body: JSON.stringify(data),
       }),
+
+    admit: (claimTxId: string) =>
+      request<TicketRecord>("/tickets/admit", {
+        method: "POST",
+        body: JSON.stringify({ claimTxId }),
+      }),
+
   },
 
 } as const;

@@ -40,6 +40,10 @@ export interface SavedTicket {
   claimTxId?: string;
   secret: { contractAddress: string; nonce: string };
   receivedAt: string;
+  /** True once the ticket has been admitted (used) on-chain. */
+  isUsed?: boolean;
+  /** ISO timestamp of when the ticket was detected as admitted. */
+  usedAt?: string;
 }
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
@@ -115,4 +119,17 @@ export function saveTicket(ticket: SavedTicket): void {
 
 export function removeTicket(id: string): void {
   write(K.MY_TICKETS, getMyTickets().filter((t) => t.id !== id));
+}
+
+export function markTicketUsed(id: string, usedAt?: string): void {
+  const list = getMyTickets();
+  const idx = list.findIndex((t) => t.id === id);
+  if (idx >= 0 && !list[idx]!.isUsed) {
+    list[idx] = {
+      ...list[idx]!,
+      isUsed: true,
+      usedAt: usedAt ?? new Date().toISOString(),
+    };
+    write(K.MY_TICKETS, list);
+  }
 }
