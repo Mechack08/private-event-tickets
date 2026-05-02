@@ -1,69 +1,57 @@
 # Private Event Tickets — Midnight Network dApp
 
-A privacy-preserving event ticketing system built on the [Midnight Network](https://midnight.network).  
-Attendees prove they hold a valid ticket using **zero-knowledge proofs** — no identity, no ticket number, no history is ever revealed.
+A full-stack, privacy-preserving event ticketing platform built on [Midnight Network](https://midnight.network).
+
+Attendees self-claim tickets by ZK-proving their age — no birth date is ever disclosed.  
+At the venue the organiser scans a QR code, and the contract admits the ticket on-chain.  
+The attendee's app shows an **ADMITTED** stamp automatically. No identity is ever revealed.
 
 ---
 
 ## Table of contents
 
-- [Why privacy matters in ticketing](#why-privacy-matters-in-ticketing)
 - [How it works](#how-it-works)
 - [Architecture](#architecture)
-- [Prerequisites](#prerequisites)
-- [Quick start](#quick-start)
+- [Local setup (step by step)](#local-setup-step-by-step)
+- [Running the project](#running-the-project)
 - [User walkthrough](#user-walkthrough)
-- [Contract deep-dive](#contract-deep-dive)
-- [Testing](#testing)
+- [Contract reference](#contract-reference)
 - [Backend API reference](#backend-api-reference)
+- [Environment variables](#environment-variables)
 - [Security design](#security-design)
 - [Known limitations](#known-limitations)
-- [Environment variables](#environment-variables)
-- [License](#license)
-
----
-
-## Why privacy matters in ticketing
-
-Traditional ticketing systems store names, email addresses, and purchase history on centralised servers — all linkable to individual identities. Even "blockchain" tickets often expose wallet addresses on a public ledger, enabling anyone to trace attendance history.
-
-Midnight solves this with its ZK-native privacy model:
-
-| What is **public** (on-chain) | What stays **private** |
-|---|---|
-| Poseidon hash commitments | Attendee identity |
-| Event name & max ticket count | Ticket number / seat |
-| Organizer's shielded key hash | Nonce / proof secret |
-| Pass / fail verification result | Who attended which event |
-
-Proofs are generated **client-side** by the wallet's built-in proving provider. Private state lives in the user's local LevelDB store. Nothing sensitive is ever sent to a server.
 
 ---
 
 ## How it works
 
 ```
-Organizer                          Attendee
-────────                           ────────
-1. Deploy contract         ──→     (event appears on-chain)
-2. Issue ticket            ──→     Organizer gets ticket secret JSON
-3. Share secret off-chain  ──→     Attendee stores secret in browser
-                                   4. Attendee connects wallet
-                                   5. Attendee submits secret
-                                   6. ZK proof generated (client-side)
-                                   7. Chain verifies: VALID / INVALID
+Organiser                                Attendee
+─────────                                ────────
+1. Deploy contract on Midnight
+   (sets name, capacity, min age)
+
+2. Event appears in the app
+                                         3. Connect Lace wallet
+                                         4. Claim ticket — ZK-proves birth year
+                                            (age ≥ min_age, no DOB disclosed)
+                                         5. Private nonce saved in localStorage
+                                         6. QR code generated from nonce
+
+7. At venue: scan attendee's QR
+8. admit_ticket() called on-chain
+   (marks ticket as used in contract)
+                                         9. App auto-syncs → ADMITTED stamp
 ```
 
-The ticket secret is a small JSON blob the organizer shares via email, QR code, or any out-of-band channel:
+### What is on-chain vs. what stays private
 
-```json
-{
-  "contractAddress": "0x…",
-  "nonce": "0x3f7a…"
-}
-```
-
-The nonce is never published on-chain — only its `persistentHash` (Poseidon) is stored as the commitment.
+| On-chain (public) | Private (never leaves device) |
+|---|---|
+| `persistentHash(ticket_nonce)` | The ticket nonce itself |
+| Event name, capacity, min age | Attendee birth year |
+| `persistentHash(organiser_secret)` | Organiser / delegate secrets |
+| Which tickets are admitted | Who attended |
 
 ---
 
@@ -72,253 +60,388 @@ The nonce is never published on-chain — only its `persistentHash` (Poseidon) i
 ```
 private-event-tickets/
 ├── contract/
-│   └── event-tickets.compact   Compact smart contract (3 ZK circuits)
+│   └── event-tickets.compact     ZK circuits (Compact language)
 │
 ├── sdk/src/
-│   ├── types.ts                Network config, shared types
-│   ├── providers.ts            Assembles MidnightProviders from wallet
-│   ├── contract-api.ts         deploy / join / createEvent / issueTicket / verifyTicket
-│   └── http-proof-provider.ts  Optional HTTP proxy for external proof server
+│   ├── types.ts                  Network config, shared types
+│   ├── providers.ts              Builds MidnightProviders from Lace wallet
+│   ├── contract-api.ts           deploy / join / createEvent / claimTicket /
+│   │                             admitTicket / grantDelegate / …
+│   └── http-proof-provider.ts    Proxies ZK proof generation to Docker server
 │
-├── frontend/                   Next.js 15 App Router + Tailwind v4
+├── frontend/                     Next.js 15 App Router + Tailwind v4
 │   ├── app/
-│   │   ├── page.tsx            Landing page with animated privacy explainer
-│   │   ├── events/             Event listing + per-event organizer/attendee views
-│   │   │   ├── page.tsx        List all your events; lookup by contract address
-│   │   │   ├── new/page.tsx    Deploy a new ticketing contract
-│   │   │   └── [address]/      Organizer dashboard (requests, issue, attendees)
-│   │   ├── my-tickets/         Attendee ticket wallet (local + backend)
-│   │   └── verify/             ZK proof submission
-│   ├── contexts/WalletContext.tsx
-│   ├── hooks/useWallet.ts      DApp Connector v4 hook (any Midnight wallet)
+│   │   ├── page.tsx              Landing page
+│   │   ├── events/               Event list + per-event organiser/attendee view
+│   │   │   ├── new/page.tsx      Deploy a new event contract
+│   │   │   └── [address]/page.tsx  Organiser dashboard + attendee QR view
+│   │   ├── my-tickets/page.tsx   Attendee ticket wallet (with ADMITTED state)
+│   │   └── verify/page.tsx       Manual ZK proof submission
+│   ├── contexts/
+│   │   ├── AuthContext.tsx       Google OAuth session
+│   │   └── WalletContext.tsx     Lace DApp Connector v4
 │   ├── lib/
-│   │   ├── api.ts              Type-safe fetch client → Express backend
-│   │   └── storage.ts          localStorage persistence for events & tickets
+│   │   ├── api.ts                Type-safe fetch client → Express backend
+│   │   └── storage.ts            localStorage persistence (SavedTicket, etc.)
 │   └── components/
 │       ├── Nav.tsx
 │       └── WalletConnect.tsx
 │
-├── backend/src/                Express 4 + Socket.io API server
-│   ├── config.ts               Zod-validated env (fail-fast on startup)
-│   ├── app.ts                  App factory — Helmet, CORS, sessions, routes
-│   ├── index.ts                Entry point with graceful shutdown
-│   ├── prisma/schema.prisma    User · Event · Ticket models
-│   ├── routes/                 auth · events · tickets
-│   ├── services/               userService · eventService · ticketService
-│   ├── middleware/             requireAuth · rateLimiter · errorHandler
-│   └── socket.ts               Socket.io with session auth; room per contract
+├── backend/src/                  Express 4 + Prisma + PostgreSQL + Socket.io
+│   ├── config.ts                 Zod-validated env (fails fast if misconfigured)
+│   ├── routes/                   auth · events · tickets
+│   ├── services/                 userService · eventService · ticketService
+│   └── socket.ts                 Real-time admission events per contract room
 │
-└── generated/                  Compiled contract artefacts (gitignored)
+└── generated/                    Compiled contract artefacts (pre-committed)
 ```
 
 ---
 
-## Prerequisites
+## Local setup (step by step)
 
-| Requirement | Version / Notes |
-|---|---|
-| [Node.js](https://nodejs.org) | ≥ 20 |
-| [pnpm](https://pnpm.io) | ≥ 9 — `npm i -g pnpm` |
-| [Lace wallet](https://www.lace.io) | Browser extension with **Midnight network** enabled |
-| [Docker Desktop](https://www.docker.com/products/docker-desktop/) | For PostgreSQL and the ZK proof server |
-| Midnight Compact compiler | `compact +0.30.0` — see below |
-| PostgreSQL | Via Docker (`pnpm db:up`) **or** a local instance |
+> **Time estimate:** 15–20 minutes on a fresh machine.  
+> Steps 1–5 are one-time setup. After that, only [Running the project](#running-the-project) is needed.
 
-### Install the Compact compiler
+---
 
+### Step 1 — Install system prerequisites
+
+You need the following tools before you start. Install anything that is missing.
+
+#### Node.js ≥ 20
+
+Check: `node --version`  
+Install from https://nodejs.org (choose the LTS release).
+
+#### pnpm ≥ 9
+
+Check: `pnpm --version`  
+Install:
 ```bash
-# Install via the Midnight toolchain manager (similar to rustup)
-curl --proto '=https' --tlsv1.2 -sSf https://get.midnight.network | sh
-pnpm compact:install          # installs compact v0.30.0
+npm install -g pnpm
 ```
 
-### Get tDUST (preprod test tokens)
+#### Docker Desktop
 
-Gas fees on preprod are paid in tDUST. Get some from the [Midnight faucet](https://docs.midnight.network/develop/tutorial/using/faucet) by pasting your shielded address (visible in Lace → Midnight settings).
+Check: `docker --version`  
+Install from https://www.docker.com/products/docker-desktop/  
+Make sure Docker Desktop is **running** before continuing.
+
+#### Lace browser extension with Midnight enabled
+
+1. Install **Lace** from https://www.lace.io in Chrome or Brave.
+2. Create a wallet (or restore an existing one).
+3. Open Lace → Settings → Network → enable **Midnight** (preprod).
+4. Copy your **shielded address** from Lace → Settings → Midnight. You need it for the faucet.
+
+#### tDUST (test tokens for gas fees)
+
+Gas fees on preprod are paid in tDUST. Get free tDUST from the Midnight faucet:  
+https://docs.midnight.network/develop/tutorial/using/faucet  
+Paste your shielded address and wait ~30 seconds.
 
 ---
 
-## Quick start
-
-### 1. Clone and install
+### Step 2 — Clone the repository
 
 ```bash
 git clone https://github.com/your-org/private-event-tickets.git
 cd private-event-tickets
+```
+
+---
+
+### Step 3 — Install all dependencies
+
+Run this **once** from the root of the repo. It installs packages for every workspace (contract, sdk, frontend, backend) in one command.
+
+```bash
 pnpm install
 ```
 
-### 2. Compile the contract *(skip if using pre-compiled artefacts)*
+This will take 1–3 minutes the first time.
 
-The compiled artefacts are already committed to `frontend/public/contracts/`. Only re-run this if you change `event-tickets.compact`:
+---
 
+### Step 4 — Set up Google OAuth
+
+The app uses **Google Sign-In** so users can create and manage events. You need a Google OAuth client ID.
+
+#### 4a. Create a Google OAuth client
+
+1. Go to https://console.cloud.google.com/
+2. Create a new project (or select an existing one).
+3. In the left menu go to **APIs & Services → Credentials**.
+4. Click **+ Create Credentials → OAuth client ID**.
+5. Application type: **Web application**.
+6. Under **Authorised JavaScript origins**, click **Add URI** and enter:
+   ```
+   http://localhost:3000
+   ```
+7. Click **Create**.
+8. Copy the **Client ID** shown in the dialog (it looks like `123456789-abc.apps.googleusercontent.com`).
+
+#### 4b. Configure the backend
+
+Copy the example env file:
 ```bash
-pnpm contract:build           # ~5–10 minutes (generates ZK proving keys)
-pnpm contract:copy            # copies artefacts to frontend/public/contracts/
+cp backend/.env.example backend/.env
 ```
 
-For a fast iteration loop without ZK key generation:
+Open `backend/.env` in any text editor. You need to make two changes:
 
+**Change 1:** Replace `SESSION_SECRET` with a real random string.  
+Run this command to generate one:
+```bash
+node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+```
+Copy the output and paste it as the value:
+```dotenv
+SESSION_SECRET=a1b2c3d4e5f6...   ← paste your generated string here
+```
+
+**Change 2:** Add your Google Client ID at the bottom of the file:
+```dotenv
+GOOGLE_CLIENT_ID=123456789-abc.apps.googleusercontent.com
+```
+
+The final `backend/.env` should look like this (all other values are already correct for local Docker):
+```dotenv
+NODE_ENV=development
+PORT=4000
+DATABASE_URL="postgresql://pet_user:pet_pass@localhost:5433/pet_db?schema=public"
+SESSION_SECRET=<your generated string>
+SESSION_NAME=pet.sid
+SESSION_TTL_SECONDS=604800
+CORS_ORIGINS=http://localhost:3000
+GOOGLE_CLIENT_ID=<your-client-id>.apps.googleusercontent.com
+```
+
+#### 4c. Configure the frontend
+
+Create the frontend env file:
+```bash
+touch frontend/.env.local
+```
+
+Open `frontend/.env.local` and add these two lines, using the **same** Client ID from step 4a:
+```dotenv
+NEXT_PUBLIC_BACKEND_URL=http://localhost:4000
+NEXT_PUBLIC_GOOGLE_CLIENT_ID=<your-client-id>.apps.googleusercontent.com
+```
+
+---
+
+### Step 5 — Start the database and run migrations
+
+**Start the PostgreSQL container:**
+```bash
+pnpm db:up
+```
+
+Wait about 10 seconds until Docker reports the container is healthy. Then run the migrations to create all tables:
+```bash
+pnpm backend:db:migrate
+```
+
+You should see output ending with `All migrations have been applied`.
+
+> The database data is stored in a Docker volume (`postgres_data`) and persists across restarts. You only need to run `db:up` once per machine boot — not every time you start the app.
+
+---
+
+### Step 6 — Start the ZK proof server
+
+ZK proof generation requires a local proof server running in Docker. Start it with:
+```bash
+pnpm proof-server:start
+```
+
+The first run pulls the `midnightntwrk/proof-server` Docker image (~200 MB). Subsequent starts are instant.
+
+Verify it is running:
+```bash
+pnpm proof-server:status
+```
+
+You should see `midnight-proof-server` listed with status `Up`.
+
+> The proof server runs on port `6300`. The Next.js frontend automatically proxies proof requests to it — no manual configuration needed.
+
+---
+
+### Step 7 — Start the app
+
+```bash
+pnpm dev
+```
+
+This starts two processes in parallel:
+
+| Service | URL | Description |
+|---|---|---|
+| Frontend (Next.js) | http://localhost:3000 | The web UI |
+| Backend (Express) | http://localhost:4000 | REST API + WebSocket |
+
+Wait about 10–15 seconds for both to finish compiling. Then open http://localhost:3000 in the browser that has Lace installed.
+
+**Quick health check:**
+```bash
+curl http://localhost:4000/health
+# expected: {"status":"ok","ts":"…"}
+```
+
+You're now running the full stack locally.
+
+---
+
+### Step 8 — (Optional) Rebuild the ZK contract
+
+Pre-compiled contract artefacts are already committed to the repo under `frontend/public/contracts/`. **You do not need to recompile unless you edit `event-tickets.compact`.**
+
+If you do change the contract, first install the Midnight Compact compiler:
+
+```bash
+# Install the Midnight toolchain manager (similar to rustup)
+curl --proto '=https' --tlsv1.2 -sSf https://get.midnight.network | sh
+
+# Install Compact v0.30.0
+pnpm compact:install
+```
+
+Then rebuild:
+```bash
+pnpm contract:build        # ~5–10 minutes (generates ZK proving keys)
+pnpm contract:copy         # copies artefacts to frontend/public/contracts/
+```
+
+For a fast syntax-only check (no key generation, takes seconds):
 ```bash
 pnpm contract:build:skip-zk && pnpm contract:copy
 ```
 
-### 3. Start the database
+---
+
+## Running the project
+
+After the one-time setup above, this is all you need each session:
 
 ```bash
-pnpm db:up                    # starts pet_postgres Docker container on port 5433
+# 1. Start the database (once per machine boot)
+pnpm db:up
+
+# 2. Start the ZK proof server (once per machine boot)
+pnpm proof-server:start
+
+# 3. Start frontend + backend together
+pnpm dev
 ```
 
-### 4. Configure and migrate the backend
+Open http://localhost:3000.
+
+### Stopping everything
 
 ```bash
-cp backend/.env.example backend/.env
-# Edit backend/.env — set DATABASE_URL to point at your Postgres instance
-pnpm backend:db:migrate       # creates the sessions, users, events, tickets tables
+pnpm proof-server:stop   # stop the proof server Docker container
+pnpm db:down             # stop the database Docker container
+# Kill the pnpm dev process with Ctrl+C in its terminal
 ```
 
-### 5. Start the proof server
+### Other useful commands
 
 ```bash
-pnpm proof-server:start       # Docker: midnightntwrk/proof-server on :6300
-```
-
-### 6. Start everything
-
-```bash
-pnpm dev                      # starts backend (http://localhost:4000) and frontend (http://localhost:3000) in parallel
-```
-
-Health check:
-```bash
-curl http://localhost:4000/health
-# {"status":"ok","ts":"…"}
+pnpm backend:db:studio   # open Prisma Studio (visual DB browser) on :5555
+pnpm typecheck           # type-check all workspaces
+pnpm test                # run the ZK contract simulation tests (~1.5 s, no Docker needed)
+pnpm proof-server:logs   # tail the proof server logs
 ```
 
 ---
 
 ## User walkthrough
 
-### Organizer: Create an event
+### Organiser: Create an event
 
-1. Open http://localhost:3000 and click **Get started → Events**
-2. Click **Connect Wallet** in the nav — approve the Midnight connection in Lace
-3. Navigate to **Events → New Event**
-4. Enter an event name and max ticket count, then click **Create Event**
-5. The dApp deploys a new Compact contract to preprod (~30–90 s)
-6. You land on the event dashboard; copy the **contract address** for attendees
+1. Open http://localhost:3000.
+2. Click **Sign in with Google** in the top-right corner and complete the sign-in.
+3. Click **Connect Wallet** and approve the Midnight DApp connection in Lace.
+4. Go to **Events → New Event**.
+5. Fill in event name, maximum capacity, and minimum age (0 = open to all).
+6. Click **Create Event**. The dApp deploys a Compact contract to Midnight preprod. This takes 30–90 seconds.
+7. You land on the event dashboard. Copy the **contract address** shown at the top — share it with attendees so they can find the event.
 
-### Organizer: Issue tickets
+### Organiser: Grant delegate access (optional)
 
-On the event dashboard (organizer view):
+On the event dashboard click **Add delegate**. This calls `grant_delegate()` on-chain and creates a secret for a co-manager who can scan tickets at the venue without having your organiser key.
 
-- **Approve a request** — attendees who clicked "Request a ticket" appear in the Requests tab; click Approve to call `issue_ticket()` on-chain
-- **Issue directly** — generates a ticket immediately; copy the secret JSON and share it with the attendee
+### Organiser: Admit attendees at the venue
 
-The ticket secret looks like:
-```json
-{ "contractAddress": "0x…", "nonce": "0x…" }
-```
-
-Share this via email, QR code, or any out-of-band channel.
-
-### Attendee: Save and verify a ticket
-
-1. Go to **My Tickets** and click **Import ticket**
-2. Paste the secret JSON and give the ticket an event name label
-3. To verify at the door: go to **Verify Ticket**, paste the JSON, and click **Verify Ticket**
-4. A ZK proof is generated locally by the wallet (30–120 s on preprod)
-5. The result (**VALID** ✓ / **INVALID** ✗) is published on-chain — nothing else is revealed
+1. Go to the event dashboard.
+2. Open the **Scanner** tab.
+3. Click **Start camera** and point it at an attendee's QR code.  
+   Alternatively, use the **Manual** tab to paste a QR payload.
+4. The app calls `admit_ticket()` on-chain. The attendee's ticket is now permanently marked as used in the contract.
 
 ---
 
-## Contract deep-dive
+### Attendee: Claim a ticket
 
-### Ledger state (`event-tickets.compact`)
+1. Open http://localhost:3000.
+2. Sign in with Google and connect your Lace wallet.
+3. Go to **Events** and find the event you want to attend.
+4. Click **Claim ticket**.
+5. Enter your birth year when prompted. This value stays in your browser — it is used as a private ZK witness and is never sent to any server.
+6. The Lace wallet generates a ZK proof and submits it to the contract (~30–120 s on preprod).
+7. Your private ticket nonce is saved in `localStorage`. Open **My Tickets** to see your ticket and QR code.
 
-```compact
-export ledger organizer:          Bytes<32>;       // shielded pubkey of event creator
-export ledger event_name:         Bytes<32>;       // UTF-8 name padded to 32 bytes
-export ledger total_tickets:      Uint<32>;        // max tickets for this event
-export ledger tickets_issued:     Counter;         // running count
-export ledger ticket_commitments: Set<Bytes<32>>;  // set of Poseidon(nonce) hashes
-```
+### Attendee: Show your QR at the door
+
+1. Open **My Tickets**.
+2. Tap your ticket to expand it. A QR code appears.
+3. Show the QR to the venue staff to be scanned in.
+
+### Attendee: Check your ADMITTED status
+
+After the organiser scans your QR:
+
+1. Open **My Tickets**.
+2. The ticket automatically syncs with the backend — no manual action needed.
+3. An amber **ADMITTED** stamp appears on your ticket, showing the date and time of admission.
+
+---
+
+## Contract reference
+
+The smart contract is in `contract/event-tickets.compact`.
+
+### On-chain ledger state
+
+| Field | Type | Description |
+|---|---|---|
+| `organizer` | `Bytes<32>` | `persistentHash(organiser_secret)` — raw secret never on-chain |
+| `event_name` | `Bytes<32>` | UTF-8 name padded to 32 bytes |
+| `total_tickets` | `Uint<32>` | Maximum claimable tickets |
+| `tickets_issued` | `Counter` | Running count of claimed tickets |
+| `is_active` | `Boolean` | `false` while paused or cancelled |
+| `is_cancelled` | `Boolean` | Permanently cancelled — cannot be reversed |
+| `min_age` | `Uint<8>` | Minimum attendee age (0 = open to all) |
+| `ticket_commitments` | `Set<Bytes<32>>` | `persistentHash(nonce)` per ticket |
+| `used_tickets` | `Set<Bytes<32>>` | Commitments admitted at venue |
+| `delegates` | `Set<Bytes<32>>` | `persistentHash(delegate_secret)` per co-manager |
 
 ### Circuits
 
-#### `create_event(name, total)`
-Initialises the event. The guard `organizer == default<Bytes<32>>` ensures it runs only once per deployment. The organizer's identity is committed as `persistentHash(caller_secret())` — the raw secret never touches the chain. `name` and `total` are explicitly `disclose()`d so event metadata is visible on-chain.
-
-#### `issue_ticket()`
-Uses two witnesses: `caller_secret()` (the organizer or delegate's private scalar) to authorise the call, and `ticket_nonce()` which the TypeScript SDK satisfies with a fresh cryptographically random field element. The nonce's `persistentHash` is stored in `ticket_commitments` and `disclose()`d so it appears on-chain. The raw nonce is returned to the SDK caller and must be shared with the attendee off-band as their ticket secret.
-
-#### `verify_ticket()`
-The attendee's SDK supplies the stored nonce via the `ticket_nonce()` witness. The circuit computes `persistentHash(nonce)` and checks `ticket_commitments.member(commitment)`. Returns a Boolean. The nonce itself is never revealed.
-
-### Privacy guarantees
-
-| Property | Mechanism |
-|---|---|
-| Attendee identity hidden | No public key, address, or wallet identifier appears on-chain |
-| Ticket number hidden | Only the commitment hash is public; which slot matched is not revealed |
-| Proof is unlinkable | Each verification generates a fresh proof; no nullifier is published |
-| Organizer-only issuance | Only the SDK holding the organizer's wallet can satisfy the `issue_ticket` witness |
-
----
-
-## Testing
-
-The `tests/` workspace package contains a contract simulation test suite that runs in ~1.5 s with no blockchain, no wallet, and no Docker required. Tests use the `@midnight-ntwrk/compact-runtime` WASM simulator directly, calling each circuit with controlled witness values and asserting ledger state after each call.
-
-### Run the tests
-
-```bash
-pnpm test              # run once
-pnpm test:watch        # re-run on file changes
-```
-
-### Test coverage
-
-| Suite | Tests | What is verified |
+| Circuit | Who calls it | What it does |
 |---|---|---|
-| `create_event` | 4 | stores name / total / `is_active`, commits organizer as `persistentHash(caller_secret)`, sets `ticket_price = 0`, rejects double-init |
-| `issue_ticket` | 6 | increments `tickets_issued`, stores nonce commitment, multiple sequential tickets, unauthorized / paused / cancelled / sold-out guards |
-| `verify_ticket` | 3 | known nonce → `true`, unknown nonce → `false`, each ticket verified independently |
-| `pause_event` | 3 | sets `is_active = false`, unauthorized guard, cancelled guard |
-| `resume_event` | 3 | restores `is_active = true`, unauthorized guard, cancelled guard |
-| `cancel_event` | 5 | sets `is_cancelled = true` + `is_active = false`, works from paused state, unauthorized guard, blocks issue/pause/resume/grant after cancel, **idempotent** (calling twice does not throw) |
-| `grant_delegate` | 5 | adds delegate hash to on-chain `Set`, delegate can issue tickets, non-organizer rejected, cancelled guard, multiple independent delegates |
-| **Invariants** | 3 | `ticket_commitments` grows monotonically, nonces are unique, pause → resume cycle restores full issuance capability |
-| **Total** | **32** | |
-
-### How it works
-
-```
-tests/
-  contract/
-    event-tickets.test.ts   ← 32 simulation tests
-  package.json              ← vitest + compact-runtime deps
-  tsconfig.json
-  vitest.config.ts
-```
-
-Key helpers used in the tests:
-
-```typescript
-// Instantiate the contract with fixed witness scalars
-function makeContract(callerSecret: bigint, ticketNonce: bigint): Contract<object>
-
-// Build an un-initialised ChargedState (ledger ground truth)
-function freshState(): ChargedState
-
-// Execute a circuit and return the resulting ChargedState
-function runCircuit(circuitFn, state, ...args): ChargedState
-
-// Compute the same on-chain commitment the contract stores
-function hashScalar(scalar: bigint): Uint8Array  // persistentHash(CompactTypeField, scalar)
-```
-
-A notable contract behaviour documented by the tests: `cancel_event` has no `!is_cancelled` guard — calling it on an already-cancelled event is **idempotent** and does not throw.
+| `create_event(name, total, age_req)` | Organiser | One-shot initialisation. Guard prevents double-init. |
+| `claim_ticket(current_year)` | Attendee | Self-service. ZK-proves `current_year − birth_year ≥ min_age`. Inserts nonce commitment. |
+| `verify_ticket()` | Anyone | Read-only. Returns `true` if ticket is valid and not yet admitted. |
+| `admit_ticket()` | Organiser / delegate | Marks ticket as used. Throws on double-admission. |
+| `pause_event()` | Organiser / delegate | Temporarily halts ticket claiming. |
+| `resume_event()` | Organiser / delegate | Restores ticket claiming. |
+| `cancel_event()` | Organiser / delegate | Permanently closes the event. |
+| `grant_delegate()` | Organiser only | Adds a co-manager by storing `persistentHash(new_secret)`. |
 
 ---
 
@@ -326,15 +449,16 @@ A notable contract behaviour documented by the tests: `cancel_event` has no `!is
 
 Base URL: `http://localhost:4000`
 
-All mutating requests require the `X-Requested-With: XMLHttpRequest` header (CSRF defence). Authenticated routes require a session cookie (`POST /auth/connect` first).
+All write requests require the `X-Requested-With: XMLHttpRequest` header (CSRF defence).  
+Authenticated routes require a session cookie — sign in via `POST /auth/google` first.
 
 ### Auth
 
-| Method | Path | Body | Description |
+| Method | Path | Auth | Description |
 |---|---|---|---|
-| `POST` | `/auth/connect` | `{ shieldedAddress }` | Upsert user, set session cookie |
-| `GET` | `/auth/me` | — | Return current session user |
-| `POST` | `/auth/disconnect` | — | Destroy session |
+| `POST` | `/auth/google` | — | Verify Google ID token, create session |
+| `GET` | `/auth/me` | ✓ | Return current session user |
+| `POST` | `/auth/logout` | ✓ | Destroy session |
 
 ### Events
 
@@ -349,21 +473,52 @@ All mutating requests require the `X-Requested-With: XMLHttpRequest` header (CSR
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| `GET` | `/tickets/mine` | ✓ | My tickets |
-| `GET` | `/tickets/event/:eventId` | ✓ | Tickets for an event |
-| `POST` | `/tickets` | ✓ | Record issued ticket commitment |
-| `POST` | `/tickets/verify` | ✓ | Mark ticket as verified (emits `ticket:verified` via Socket.io) |
+| `GET` | `/tickets/mine` | ✓ | My tickets — used for ADMITTED auto-sync |
+| `GET` | `/tickets/event/:eventId` | ✓ | All tickets for an event |
+| `POST` | `/tickets` | ✓ | Record a newly claimed ticket |
+| `POST` | `/tickets/admit` | ✓ | Mark a ticket as admitted |
 
-### Socket.io events
+### Socket.io
 
-Connect at `ws://localhost:4000`. Session cookie must be set.
+Connect at `ws://localhost:4000`. A valid session cookie must be present.
 
-| Event (server → client) | Payload | Description |
+```js
+// Subscribe to live updates for a specific event
+socket.emit('join:event', contractAddress)
+```
+
+| Event (server → client) | Payload | When it fires |
 |---|---|---|
-| `ticket:issued` | `{ ticket, eventId }` | New ticket committed on-chain |
-| `ticket:verified` | `{ ticketId, verifiedAt }` | Ticket successfully verified |
+| `ticket:admitted` | `{ claimTxId, verifiedAt }` | Organiser scans a QR code |
 
-Join a room with `socket.emit('join:event', contractAddress)` to receive events for a specific event.
+---
+
+## Environment variables
+
+### `backend/.env`
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `DATABASE_URL` | ✓ | — | PostgreSQL connection string |
+| `SESSION_SECRET` | ✓ | — | ≥ 32 random characters for cookie signing |
+| `GOOGLE_CLIENT_ID` | ✓ | — | From Google Cloud Console → Credentials |
+| `SESSION_NAME` | | `pet.sid` | Session cookie name |
+| `SESSION_TTL_SECONDS` | | `604800` | Session TTL (default: 7 days) |
+| `CORS_ORIGINS` | | `http://localhost:3000` | Comma-separated allowed origins |
+| `NODE_ENV` | | `development` | `development` or `production` |
+| `PORT` | | `4000` | Backend HTTP port |
+
+Generate a session secret:
+```bash
+node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+```
+
+### `frontend/.env.local`
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `NEXT_PUBLIC_BACKEND_URL` | | `http://localhost:4000` | Backend API base URL |
+| `NEXT_PUBLIC_GOOGLE_CLIENT_ID` | ✓ | — | Same value as `GOOGLE_CLIENT_ID` in backend |
 
 ---
 
@@ -372,14 +527,14 @@ Join a room with `socket.emit('join:event', contractAddress)` to receive events 
 | Layer | Mechanism |
 |---|---|
 | Session fixation | `req.session.regenerate()` on every login |
-| CSRF | `X-Requested-With` header required on all mutating requests |
-| Cookie | `httpOnly`, `sameSite: strict` in production, 7-day rolling TTL |
+| CSRF | `X-Requested-With` header required on all write requests |
+| Cookie | `httpOnly`, `sameSite: strict` in production, rolling 7-day TTL |
 | Rate limiting | 30 req/15 min on auth routes; 120 req/min global |
 | Input validation | Zod schemas on all request bodies |
-| DB queries | Prisma parameterized — no raw SQL injection surface |
-| Headers | Helmet with CSP enabled in production |
-| Env validation | Zod schema at startup — server refuses to start if misconfigured |
-| Private state | Never sent to any server — stays in user's browser LevelDB |
+| SQL injection | Prisma parameterised queries — no raw SQL |
+| Headers | Helmet with CSP in production |
+| Env validation | Zod schema at startup — process exits if misconfigured |
+| Private state | Ticket nonce never sent to any server — stored in browser localStorage only |
 
 ---
 
@@ -387,254 +542,12 @@ Join a room with `socket.emit('join:event', contractAddress)` to receive events 
 
 | Limitation | Notes |
 |---|---|
-| Max tickets | Compact `Set` size is fixed at compile time. Increase and recompile for larger events |
-| Single event per contract | Deploy a new contract per event |
+| One event per contract | Deploy a new contract for each event |
 | No ticket revocation | Commitments cannot be removed from the on-chain `Set` in v1 |
-| Proof time | Client-side ZK proof generation takes 30–120 s on preprod hardware |
-| Lace wallet only | Tested against Lace with Midnight network. Any CAIP-372-compatible wallet will work |
-
----
-
-## Environment variables
-
-### Backend (`backend/.env`)
-
-| Variable | Default | Required | Description |
-|---|---|---|---|
-| `DATABASE_URL` | — | ✓ | PostgreSQL connection string |
-| `SESSION_SECRET` | — | ✓ | ≥32 char random string for cookie signing |
-| `SESSION_NAME` | `pet.sid` | | Session cookie name |
-| `SESSION_TTL_SECONDS` | `604800` | | Session TTL (7 days) |
-| `CORS_ORIGINS` | `http://localhost:3000` | | Comma-separated allowed origins |
-| `NODE_ENV` | `development` | | `development` / `production` |
-| `PORT` | `4000` | | Backend HTTP port |
-
-Generate a session secret:
-```bash
-node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
-```
-
-### Frontend (`frontend/.env.local`)
-
-| Variable | Default | Description |
-|---|---|---|
-| `NEXT_PUBLIC_BACKEND_URL` | `http://localhost:4000` | Backend API base URL |
-
----
-
-## License
-
-MIT
-
-
----
-
-## Why privacy matters in ticketing
-
-Traditional ticketing systems store attendee names, email addresses, and purchase history on centralised servers — all linkable to individual identities.  Even "blockchain" tickets often publish wallet addresses on a public ledger, enabling anyone to trace an attendee's history.
-
-Midnight solves this with its [ZK-native privacy model](https://docs.midnight.network):
-
-| What is on-chain | What stays private |
-|---|---|
-| Poseidon hash commitments | Attendee identity |
-| Event name & ticket count | Ticket number |
-| Organizer's shielded key | Nonce / proof secret |
-| Pass / fail verification result | Who attended |
-
-Proofs are generated **client-side** by a local proof server.  Private state lives in the user's local LevelDB store.  Nothing sensitive is ever sent to a server.
-
----
-
-## Architecture
-
-```
-contract/
-  event-tickets.compact   Compact smart contract (ZK circuits)
-  Makefile                build targets
-
-sdk/src/
-  types.ts                Network config, shared types
-  providers.ts            Assembles MidnightProviders from Lace wallet
-  http-proof-provider.ts  HTTP proxy to local Docker proof server
-  contract-api.ts         deploy / join / createEvent / issueTicket / verifyTicket
-
-frontend/
-  app/
-    page.tsx              Landing page
-    create-event/         Organizer: deploy contract + initialise event
-    issue-ticket/         Organizer: mint ticket commitment for attendee
-    verify-ticket/        Attendee: ZK proof of ticket ownership
-    api/proof/            Next.js API routes proxying the local proof server
-  hooks/useLaceWallet.ts  DApp Connector wallet hook
-  components/WalletConnect.tsx
-  shims/                  Turbopack browser shims (isomorphic-ws, fs)
-  next.config.ts          Turbopack alias config
-```
-
----
-
-## Prerequisites
-
-| Requirement | Version / Notes |
-|---|---|
-| [Node.js](https://nodejs.org) | ≥ 20 |
-| [Lace wallet](https://www.lace.io) | Browser extension with Midnight enabled |
-| [Docker Desktop](https://www.docker.com/products/docker-desktop/) | For the local ZK proof server |
-| Midnight Compact compiler | `compact +0.30.0` — install via `rustup` toolchain manager |
-
-### Install the Compact compiler
-
-```bash
-# Install via the midnight toolchain manager (similar to rustup)
-curl --proto '=https' --tlsv1.2 -sSf https://get.midnight.network | sh
-compact toolchain install 0.30.0
-```
-
-### Start the Docker proof server
-
-ZK proof generation requires a running proof server.  Start it before using the dApp:
-
-```bash
-docker run -d --rm -p 6300:6300 midnightntwrk/proof-server
-```
-
-The Next.js frontend proxies requests to this server through `/api/proof/*` to avoid CORS issues.
-
----
-
-## Quick start
-
-### 1. Compile the contract
-
-```bash
-cd contract
-make check        # fast syntax check (no ZK keys, ~seconds)
-make build        # full compile with ZK key generation (~5–10 minutes)
-make copy-to-frontend  # copies artefacts to frontend/public/contracts/
-```
-
-The generated artefacts are placed in `generated/managed/event-tickets/contract/`:
-
-| File | Purpose |
-|---|---|
-| `index.cjs` / `index.d.ts` | JS/TS contract module |
-| `contract.wasm` | WASM runtime |
-| `circuit_keys/*.zkir` | ZK intermediate representation |
-| `circuit_keys/*.pk.bin` | Proving keys (required for proof generation) |
-
-### 2. Install dependencies
-
-```bash
-# SDK
-cd sdk && npm install
-
-# Frontend
-cd ../frontend && npm install
-```
-
-### 3. Run the frontend
-
-```bash
-cd frontend
-npm run dev        # starts Next.js with Turbopack on http://localhost:3000
-```
-
----
-
-## Usage walkthrough
-
-### Organizer: Create an event
-
-1. Open http://localhost:3000/create-event
-2. Connect your Lace wallet
-3. Enter an event name and max ticket count (≤ 100 for v1)
-4. Click **Create Event** — a new contract is deployed to preprod
-5. Copy the **contract address** — you'll need it to issue tickets
-
-### Organizer: Issue a ticket
-
-1. Open http://localhost:3000/issue-ticket
-2. Connect your organizer wallet
-3. Paste the contract address, the attendee's shielded public key (they can find it in Lace → Settings), and a ticket ID
-4. Click **Issue Ticket**
-5. A `TicketSecret` JSON is generated — **send this to the attendee off-chain** (e.g. email, QR code)
-
-```json
-{
-  "contractAddress": "0x…",
-  "ticketId": 0,
-  "nonce": "0x3f7a…",
-  "holderPubkeyField": "0x1c4b…"
-}
-```
-
-### Attendee: Verify a ticket
-
-1. Open http://localhost:3000/verify-ticket
-2. Connect the wallet that received the ticket
-3. Paste the `TicketSecret` JSON
-4. Click **Verify Ticket** — a ZK proof is generated locally (2–4 min)
-5. The result (**VALID** / **INVALID**) is published on-chain; no other information is revealed
-
----
-
-## Circuit privacy breakdown
-
-### `create_event`
-
-`own_public_key()` is called inside the circuit, so the organizer's identity is captured from the wallet key pair — it cannot be spoofed by passing a different argument.  The event name and ticket count are made public via `disclose()`.
-
-### `issue_ticket`
-
-The `assert own_public_key() == organizer` constraint means that ZK proof generation fails for any caller who is not the organizer — cryptographically enforced, not by a permissioned server.  The holder's public key and nonce are **private witnesses**: only their Poseidon hash appears on-chain.
-
-### `verify_ticket`
-
-The holder proves knowledge of `(ticket_id, nonce)` such that:
-
-```
-persistent_hash(ticket_id ‖ holder_pubkey_field ‖ nonce) ∈ ticket_commitments
-```
-
-The verifier learns only the Boolean result.  All 100 commitment slots are checked **unconditionally** (no short-circuit) to prevent timing side-channels that could reveal which slot matched.
-
----
-
-## Deploying to preprod
-
-The frontend is pre-configured with preprod endpoints in `sdk/src/types.ts`:
-
-```typescript
-export const PREPROD_CONFIG = {
-  networkId: "preprod",
-  indexerUri: "https://indexer.preprod.midnight.network/api/v3/graphql",
-  indexerWsUri: "wss://indexer.preprod.midnight.network/api/v3/graphql/ws",
-  substrateNodeUri: "wss://rpc.preprod.midnight.network",
-};
-```
-
-Lace wallet must be set to the Midnight preprod network.  tDUST (test tokens) for gas fees are available from the [Midnight faucet](https://docs.midnight.network/develop/tutorial/using/faucet).
-
----
-
-## Known limitations (v1)
-
-| Limitation | Notes |
-|---|---|
-| Max 100 tickets | Compact vectors are fixed-size at compile time; increase `MAX_TICKETS` and recompile for larger events |
-| Single event per contract | A new contract must be deployed for each event |
-| No re-issuance | Once a ticket is issued it cannot be revoked in v1 |
-| `Bytes<32>→Field` conversion | Done in the SDK via a manual byte-interpretation.  When Compact adds a native `bytes_to_field()`, update `pubkeyToField()` in `sdk/src/contract-api.ts` and remove the corresponding TODOs in the contract |
-| Proof server local only | The proof server runs on `localhost:6300`; Next.js proxies it.  A cloud proof server API is on Midnight's roadmap |
-
----
-
-## Environment variables
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `PROOF_SERVER_URL` | `http://localhost:6300` | Override proof server address in the Next.js API routes |
+| Delegate removal | The `delegates` Set is append-only; cancel and redeploy to rotate co-managers |
+| Proof time | Client-side ZK proofs take 30–120 s on Midnight preprod |
+| Lace wallet only | Tested against Lace with Midnight network enabled |
+| Max capacity | `Set` size is fixed at compile time — recompile to increase the limit |
 
 ---
 

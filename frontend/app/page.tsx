@@ -121,6 +121,10 @@ function FlowStep({
   const ref = useRef<HTMLDivElement>(null);
   const inView = useInView(ref, { once: true, margin: "-80px 0px" });
 
+  const roleColor = role === "organizer"
+    ? "text-violet-400 border-violet-500/25 bg-violet-500/[0.07]"
+    : "text-sky-400 border-sky-500/25 bg-sky-500/[0.07]";
+
   const card = (
     <div
       className="relative overflow-hidden border p-5 group"
@@ -129,17 +133,14 @@ function FlowStep({
       <motion.div
         className="absolute inset-0 pointer-events-none"
         animate={inView ? { opacity: 1 } : { opacity: 0 }}
-        style={{
-          background:
-            "linear-gradient(135deg, rgba(255,255,255,0.03) 0%, transparent 60%)",
-        }}
+        style={{ background: "linear-gradient(135deg, rgba(255,255,255,0.03) 0%, transparent 60%)" }}
         transition={{ duration: 0.6 }}
       />
       <div className="flex items-start gap-3">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-2 flex-wrap">
             <h3 className="text-sm font-semibold text-white">{title}</h3>
-            <span className="text-[10px] font-medium border border-white/10 text-zinc-500 px-1.5 py-0.5 uppercase tracking-wider">
+            <span className={`text-[10px] font-medium border px-1.5 py-0.5 uppercase tracking-wider ${roleColor}`}>
               {role}
             </span>
             {locked && (
@@ -150,9 +151,7 @@ function FlowStep({
           </div>
           <p className="text-xs text-zinc-500 leading-relaxed">{body}</p>
         </div>
-        <span className="text-zinc-700 group-hover:text-zinc-300 transition-colors shrink-0 text-sm">
-          →
-        </span>
+        <span className="text-zinc-700 group-hover:text-zinc-300 transition-colors shrink-0 text-sm">→</span>
       </div>
     </div>
   );
@@ -164,25 +163,15 @@ function FlowStep({
         <motion.div
           animate={
             inView
-              ? {
-                  borderColor: "rgba(255,255,255,0.55)",
-                  backgroundColor: "rgba(255,255,255,0.06)",
-                }
-              : {
-                  borderColor: "rgba(255,255,255,0.08)",
-                  backgroundColor: "rgba(0,0,0,0)",
-                }
+              ? { borderColor: "rgba(255,255,255,0.55)", backgroundColor: "rgba(255,255,255,0.06)" }
+              : { borderColor: "rgba(255,255,255,0.08)", backgroundColor: "rgba(0,0,0,0)" }
           }
           transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] as [number,number,number,number] }}
           className="w-8 h-8 border flex items-center justify-center shrink-0"
           style={{ borderColor: "rgba(255,255,255,0.08)" }}
         >
           <motion.span
-            animate={
-              inView
-                ? { opacity: 1, color: "#ffffff" }
-                : { opacity: 0.2, color: "#52525b" }
-            }
+            animate={inView ? { opacity: 1, color: "#ffffff" } : { opacity: 0.2, color: "#52525b" }}
             transition={{ duration: 0.4, delay: 0.1 }}
             className="font-mono text-[10px] font-bold"
             style={{ color: "#52525b" }}
@@ -192,17 +181,10 @@ function FlowStep({
         </motion.div>
 
         {!isLast && (
-          <div
-            className="flex-1 w-px mt-1 overflow-hidden"
-            style={{ minHeight: 28, backgroundColor: "rgba(255,255,255,0.06)" }}
-          >
+          <div className="flex-1 w-px mt-1 overflow-hidden" style={{ minHeight: 28, backgroundColor: "rgba(255,255,255,0.06)" }}>
             <motion.div
               className="w-full h-full"
-              style={{
-                backgroundColor: "rgba(255,255,255,0.22)",
-                scaleY: 0,
-                transformOrigin: "top",
-              }}
+              style={{ backgroundColor: "rgba(255,255,255,0.22)", scaleY: 0, transformOrigin: "top" }}
               animate={inView ? { scaleY: 1 } : { scaleY: 0 }}
               transition={{ duration: 0.7, delay: 0.3, ease: [0.22, 1, 0.36, 1] as [number,number,number,number] }}
             />
@@ -219,9 +201,7 @@ function FlowStep({
         {locked ? (
           <div className="opacity-35 cursor-not-allowed select-none">{card}</div>
         ) : (
-          <Link href={href} className="block hover:opacity-90 transition-opacity">
-            {card}
-          </Link>
+          <Link href={href} className="block hover:opacity-90 transition-opacity">{card}</Link>
         )}
       </motion.div>
     </div>
@@ -237,19 +217,15 @@ export default function HomePage() {
     <>
       <Nav />
 
-      {/* Subtle grid background — static, non-distracting */}
+      {/* Subtle grid background */}
       <div className="pointer-events-none fixed inset-0 -z-10 grid-lines opacity-100" aria-hidden />
 
       <main className="relative z-10 min-h-dvh pt-14">
+
         {/* ── HERO ─────────────────────────────────────────────────── */}
         <section className="mx-auto max-w-4xl px-5 pt-28 pb-20 text-center">
-          {/* Entrance: staggered children */}
-          <motion.div
-            initial="hidden"
-            animate="show"
-            variants={stagger(0.12)}
-            className="flex flex-col items-center"
-          >
+          <motion.div initial="hidden" animate="show" variants={stagger(0.12)} className="flex flex-col items-center">
+
             {/* Status badge */}
             <motion.div variants={fadeUp} className="mb-10">
               <div className="inline-flex items-center gap-2 border border-white/10 bg-white/[0.03] px-3 py-1">
@@ -260,30 +236,27 @@ export default function HomePage() {
               </div>
             </motion.div>
 
-            {/* Main headline */}
+            {/* Headline */}
             <motion.h1
               variants={fadeUp}
               className="text-5xl sm:text-7xl font-black tracking-tighter leading-[0.93] mb-6 text-white"
             >
-              <span className="block">Events that</span>
-              <span className="block text-zinc-300">respect privacy</span>
+              <span className="block">Private tickets.</span>
+              <span className="block text-zinc-300">Proof on-chain.</span>
             </motion.h1>
 
             <motion.p
               variants={fadeUp}
               className="text-base sm:text-lg text-zinc-400 max-w-xl mx-auto mb-4 leading-relaxed"
             >
-              The first full-featured ticketing platform built on{" "}
+              A full-stack ticketing platform built on{" "}
               <span className="text-white font-medium">Midnight Network</span>.
-              Paid or free, age-gated, or open — with zero-knowledge proofs
-              ensuring your attendees&apos; privacy is never compromised.
+              Attendees self-claim tickets with a ZK age proof, show a QR at the
+              door, and get admitted on-chain — without ever revealing their identity.
             </motion.p>
 
             {/* CTAs */}
-            <motion.div
-              variants={fadeUp}
-              className="flex items-center justify-center gap-3 flex-wrap mt-8"
-            >
+            <motion.div variants={fadeUp} className="flex items-center justify-center gap-3 flex-wrap mt-8">
               {connected ? (
                 <>
                   <Link
@@ -318,13 +291,10 @@ export default function HomePage() {
             </motion.div>
 
             {/* Stats */}
-            <motion.div
-              variants={fadeUp}
-              className="flex items-center justify-center gap-0 mt-14 flex-wrap"
-            >
-              <StatChip value="ZK" label="Privacy proofs" />
-              <StatChip value="∞" label="Ticket capacity" />
-              <StatChip value="0ms" label="ID revealed" />
+            <motion.div variants={fadeUp} className="flex items-center justify-center gap-0 mt-14 flex-wrap">
+              <StatChip value="ZK" label="Age proofs" />
+              <StatChip value="QR" label="Venue admission" />
+              <StatChip value="0" label="Identity revealed" />
               <StatChip value="100%" label="On-chain verifiable" />
             </motion.div>
           </motion.div>
@@ -347,20 +317,11 @@ export default function HomePage() {
             <FeatureCard
               icon={
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 18.75a60.07 60.07 0 0 1 15.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 0 1 3 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 0 0-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 0 1-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 0 0 3 15h-.75M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm3 0h1.125c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125H18M15 10.5H9" />
-                </svg>
-              }
-              title="Free & paid events"
-              body="Set a ticket price in any Midnight-supported currency. Free events work with zero friction — no wallet required to browse."
-            />
-            <FeatureCard
-              icon={
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
                 </svg>
               }
-              title="Age-gated access"
-              body="Require attendees to ZK-prove they meet an age threshold — no birth date ever leaves their device."
+              title="ZK age gate"
+              body="Set a minimum age requirement. Attendees ZK-prove they qualify using only their birth year — no date of birth ever leaves their device."
             />
             <FeatureCard
               icon={
@@ -368,35 +329,45 @@ export default function HomePage() {
                   <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z" />
                 </svg>
               }
-              title="ZK proof of eligibility"
-              body="Attendees prove age, membership, or payment — without disclosing the underlying data. Verification is instant and on-chain."
+              title="Self-service claiming"
+              body="No organizer approval needed. Attendees connect their Lace wallet, pass the age check, and receive a private ticket nonce instantly on-chain."
             />
             <FeatureCard
               icon={
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1 1 15 0Z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 4.875c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5A1.125 1.125 0 0 1 3.75 9.375v-4.5ZM3.75 14.625c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5a1.125 1.125 0 0 1-1.125-1.125v-4.5ZM13.5 4.875c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5A1.125 1.125 0 0 1 13.5 9.375v-4.5Z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 6.75h.75v.75h-.75v-.75ZM6.75 16.5h.75v.75h-.75v-.75ZM16.5 6.75h.75v.75h-.75v-.75ZM13.5 13.5h.75v.75h-.75v-.75ZM13.5 19.5h.75v.75h-.75v-.75ZM19.5 13.5h.75v.75h-.75v-.75ZM19.5 19.5h.75v.75h-.75v-.75ZM16.5 16.5h.75v.75h-.75v-.75Z" />
                 </svg>
               }
-              title="Rich event details"
-              body="Location, date, time, cover image, description, and custom tags — all stored off-chain via the platform backend."
+              title="QR admission at the door"
+              body="Attendees show a QR code encoding their private nonce. The organizer scans it, the contract verifies and marks the ticket used — all on-chain."
             />
             <FeatureCard
               icon={
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M18 18.72a9.094 9.094 0 0 0 3.741-.479 3 3 0 0 0-4.682-2.72m.94 3.198.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0 1 12 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 0 1 6 18.719m12 0a5.971 5.971 0 0 0-.941-3.197m0 0A5.995 5.995 0 0 0 12 12.75a5.995 5.995 0 0 0-5.058 2.772m0 0a3 3 0 0 0-4.681 2.72 8.986 8.986 0 0 0 3.74.477m.94-3.197a5.971 5.971 0 0 0-.94 3.197M15 6.75a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm6 3a2.25 2.25 0 1 1-4.5 0 2.25 2.25 0 0 1 4.5 0Zm-13.5 0a2.25 2.25 0 1 1-4.5 0 2.25 2.25 0 0 1 4.5 0Z" />
                 </svg>
               }
-              title="Organizer dashboard"
-              body="Manage requests, approve or reject attendees, monitor capacity, and export check-in lists — all in one place."
+              title="Delegate staff access"
+              body="Grant co-organizers a separate on-chain identity so venue staff can scan tickets without ever seeing the organizer's private key."
             />
             <FeatureCard
               icon={
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M7.864 4.243A7.5 7.5 0 0 1 19.5 10.5c0 2.92-.556 5.709-1.568 8.268M5.742 6.364A7.465 7.465 0 0 0 4.5 10.5a7.464 7.464 0 0 1-1.15 3.993m1.989 3.559A11.209 11.209 0 0 0 8.25 10.5a3.75 3.75 0 1 1 7.5 0c0 .527-.021 1.049-.064 1.565M12 10.5a14.94 14.94 0 0 1-3.6 9.75m6.633-4.596a18.666 18.666 0 0 1-2.485 5.33" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3v11.25A2.25 2.25 0 0 0 6 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0 1 18 16.5h-2.25m-7.5 0h7.5m-7.5 0-1 3m8.5-3 1 3m0 0 .5 1.5m-.5-1.5h-9.5m0 0-.5 1.5M9 11.25v1.5M12 9v3.75m3-6v6" />
                 </svg>
               }
-              title="Any Midnight wallet"
-              body="Works with any wallet implementing the Midnight DApp Connector API — Lace, Eternl, and future wallets."
+              title="Live admission dashboard"
+              body="Real-time admitted / claimed counts, per-ticket status, and a Socket.io-powered feed — all updated the moment a QR is scanned."
+            />
+            <FeatureCard
+              icon={
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z" />
+                </svg>
+              }
+              title="Secrets stay local"
+              body="Your ticket nonce is generated in-browser and stored only in localStorage. The backend stores only the public on-chain txId — never the nonce."
             />
           </motion.div>
         </section>
@@ -405,7 +376,7 @@ export default function HomePage() {
         <section className="mx-auto max-w-4xl px-5 pb-24">
           <Reveal className="mb-10">
             <p className="text-[11px] text-zinc-500 uppercase tracking-widest font-medium mb-2">How it works</p>
-            <h2 className="text-2xl font-bold text-white tracking-tight">From creation to proof</h2>
+            <h2 className="text-2xl font-bold text-white tracking-tight">From creation to admission</h2>
           </Reveal>
 
           <div className="space-y-0">
@@ -413,7 +384,7 @@ export default function HomePage() {
               n="01"
               role="organizer"
               title="Create your event"
-              body="Deploy the ZK contract, set name, capacity, price, age restrictions, and upload event details to the backend."
+              body="Deploy the ZK contract on Midnight, set name, capacity, min age, and publish rich metadata (location, dates, description) via the platform."
               href="/events/new"
               locked={!connected}
               isLast={false}
@@ -421,28 +392,28 @@ export default function HomePage() {
             <FlowStep
               n="02"
               role="attendee"
-              title="Buy or request a ticket"
-              body="Browse public events. Pay if required, prove eligibility with ZK proofs from your wallet — no ID documents shared."
+              title="Claim a ticket"
+              body="Connect your Lace wallet, provide your birth year as a private witness, and receive a unique ticket nonce committed on-chain — without revealing any personal data."
               href="/events"
               locked={false}
               isLast={false}
             />
             <FlowStep
               n="03"
-              role="organizer"
-              title="Approve & issue tickets"
-              body="Review requests and approve attendees. Each approval commits a Poseidon-hashed nonce to the on-chain ledger."
-              href="/events"
-              locked={!connected}
+              role="attendee"
+              title="Show your QR at the door"
+              body="Open My Tickets and show the QR code. It encodes your private nonce — the only thing the organizer needs to admit you."
+              href="/my-tickets"
+              locked={false}
               isLast={false}
             />
             <FlowStep
               n="04"
-              role="attendee"
-              title="Prove ownership at the door"
-              body="At entry, generate a ZK proof from your ticket secret. The verifier sees only pass or fail — identity stays private."
-              href="/verify"
-              locked={false}
+              role="organizer"
+              title="Scan & admit on-chain"
+              body="Scan the QR with your phone. The contract verifies the ticket is valid and unused, marks it admitted, and the attendee's app updates automatically."
+              href="/events"
+              locked={!connected}
               isLast={true}
             />
           </div>
@@ -456,16 +427,16 @@ export default function HomePage() {
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-8">
                 {[
                   {
-                    title: "Zero identity disclosure",
-                    body: "ZK proofs reveal only the statement proved — age ≥ 18, valid ticket — never the underlying data.",
+                    title: "Age without a birthday",
+                    body: "The age check is a ZK constraint inside the Compact circuit. Only a proof that age ≥ min_age is submitted — the birth year never leaves the browser.",
                   },
                   {
-                    title: "Commitments, not keys",
-                    body: "Only Poseidon hashes of ticket nonces appear on-chain. Names, emails, and pubkeys never touch the ledger.",
+                    title: "Hashes, not identities",
+                    body: "Only persistentHash(ticket_nonce) is stored on the Midnight ledger. No names, emails, wallet addresses, or public keys ever touch the contract.",
                   },
                   {
-                    title: "Secrets stay local",
-                    body: "Your ticket nonce is generated client-side and shared directly. The platform never sees your secret.",
+                    title: "Admission without re-identification",
+                    body: "The organizer scans a QR that encodes the nonce. The contract checks the hash — and that is all. The attendee is admitted, not identified.",
                   },
                 ].map(({ title, body }) => (
                   <div key={title} className="flex flex-col gap-2">
@@ -479,7 +450,7 @@ export default function HomePage() {
           </Reveal>
         </section>
 
-        {/* ── BOTTOM CTA (only when disconnected) ──────────────────── */}
+        {/* ── BOTTOM CTA ───────────────────────────────────────────── */}
         {!connected && (
           <section className="mx-auto max-w-4xl px-5 pb-24">
             <Reveal>
@@ -487,7 +458,7 @@ export default function HomePage() {
                 <p className="text-xs text-zinc-500 uppercase tracking-widest font-medium mb-4">Get started</p>
                 <h2 className="text-2xl font-bold text-white mb-3 tracking-tight">Ready to run privacy-first events?</h2>
                 <p className="text-sm text-zinc-400 max-w-sm mx-auto mb-8">
-                  Sign in with Google to create events, manage tickets, and explore the platform.
+                  Sign in with Google to create events, deploy contracts, and manage admissions.
                 </p>
                 <Link
                   href="/events"
@@ -499,8 +470,8 @@ export default function HomePage() {
             </Reveal>
           </section>
         )}
+
       </main>
     </>
   );
 }
-
