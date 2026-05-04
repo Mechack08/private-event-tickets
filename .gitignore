@@ -58,5 +58,8 @@ coverage/
 # ── Docker ───────────────────────────────────────────────────────────────────
 # (nothing to ignore — proof server is pulled from Docker Hub at runtime)
 
+# ── Articles / local docs ────────────────────────────────────────────────────
+ARTICLE.md
+
 # ── Backend build ─────────────────────────────────────────────────────────────
 backend/dist/
