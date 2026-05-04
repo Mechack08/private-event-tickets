@@ -32,7 +32,7 @@ export interface AvailableWallet {
   icon?: string;
 }
 
-export interface WalletState {
+export interface UseWalletReturn {
   status: WalletStatus;
   wallet: WalletConnectedAPI | null;
   /** Bech32m shielded address from the connected wallet (for display). */
@@ -50,7 +50,7 @@ function fallbackName(key: string): string {
   return key.replace(/^mn/i, "").replace(/([a-z])([A-Z])/g, "$1 $2");
 }
 
-export function useWallet(): WalletState {
+export function useWallet(): UseWalletReturn {
   const [status, setStatus]                   = useState<WalletStatus>("disconnected");
   const [wallet, setWallet]                   = useState<WalletConnectedAPI | null>(null);
   const [shieldedPubkey, setShieldedPubkey]   = useState<string | null>(null);
