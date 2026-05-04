@@ -105,10 +105,12 @@ function HexStream({ value, delay = 0 }: { value: string; delay?: number }) {
 function ResultScreen({
   verified,
   txId,
+  proofDuration,
   onReset,
 }: {
   verified: boolean;
   txId: string | null;
+  proofDuration: number | null;
   onReset: () => void;
 }) {
   const accent = verified ? "#10b981" : "#ef4444";
@@ -217,7 +219,7 @@ function ResultScreen({
             <div className="flex items-center gap-3 border border-white/6 bg-white/[0.02] px-4 py-3">
               <span className="text-[9px] font-mono font-semibold tracking-widest text-zinc-600 uppercase">Proof time</span>
               <span className="flex-1 text-right text-[10px] font-mono text-zinc-400 tabular-nums">
-                <CountUp to={Math.floor(Math.random() * 60 + 100)} delay={1000} />s
+                {proofDuration != null ? <><CountUp to={proofDuration} delay={1000} />s</> : "—"}
               </span>
             </div>
           </motion.div>
@@ -260,6 +262,7 @@ export default function VerifyPage() {
   const [verified, setVerified] = useState<boolean | null>(null);
   const [txId, setTxId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [proofDuration, setProofDuration] = useState<number | null>(null);
 
   const loading = phase === "parsing" || phase === "proving";
 
@@ -269,6 +272,7 @@ export default function VerifyPage() {
     setVerified(null);
     setTxId(null);
     setError(null);
+    setProofDuration(null);
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -291,6 +295,7 @@ export default function VerifyPage() {
     }
 
     setPhase("proving");
+    const proofStart = Date.now();
 
     try {
       const liveWallet = wallet ?? await connect();
@@ -308,6 +313,7 @@ export default function VerifyPage() {
       const { verified: ok, txId: id } = await contractApi.verifyTicket(hexToBigint(secret.nonce));
       setVerified(ok);
       setTxId(id);
+      setProofDuration(Math.round((Date.now() - proofStart) / 1000));
       setPhase("done");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -326,6 +332,7 @@ export default function VerifyPage() {
                 key="result"
                 verified={verified}
                 txId={txId}
+                proofDuration={proofDuration}
                 onReset={reset}
               />
             ) : (
