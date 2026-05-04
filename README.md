@@ -146,7 +146,7 @@ Paste your shielded address and wait ~30 seconds.
 ### Step 2 — Clone the repository
 
 ```bash
-git clone https://github.com/your-org/private-event-tickets.git
+git clone https://github.com/Mechack08/private-event-tickets.git
 cd private-event-tickets
 ```
 
@@ -201,7 +201,7 @@ Copy the output and paste it as the value:
 SESSION_SECRET=a1b2c3d4e5f6...   ← paste your generated string here
 ```
 
-**Change 2:** Add your Google Client ID at the bottom of the file:
+**Change 2:** Replace `GOOGLE_CLIENT_ID` with your Client ID from step 4a:
 ```dotenv
 GOOGLE_CLIENT_ID=123456789-abc.apps.googleusercontent.com
 ```
@@ -220,12 +220,12 @@ GOOGLE_CLIENT_ID=<your-client-id>.apps.googleusercontent.com
 
 #### 4c. Configure the frontend
 
-Create the frontend env file:
+Copy the example env file:
 ```bash
-touch frontend/.env.local
+cp frontend/.env.local.example frontend/.env.local
 ```
 
-Open `frontend/.env.local` and add these two lines, using the **same** Client ID from step 4a:
+Open `frontend/.env.local` and replace `<your-client-id>` with the **same** Client ID from step 4a:
 ```dotenv
 NEXT_PUBLIC_BACKEND_URL=http://localhost:4000
 NEXT_PUBLIC_GOOGLE_CLIENT_ID=<your-client-id>.apps.googleusercontent.com
@@ -235,12 +235,12 @@ NEXT_PUBLIC_GOOGLE_CLIENT_ID=<your-client-id>.apps.googleusercontent.com
 
 ### Step 5 — Start the database and run migrations
 
-**Start the PostgreSQL container:**
+**Start the PostgreSQL container and wait until it is healthy:**
 ```bash
 pnpm db:up
 ```
 
-Wait about 10 seconds until Docker reports the container is healthy. Then run the migrations to create all tables:
+This command returns once Docker reports the container as healthy (the `healthcheck` in `docker-compose.yml` polls `pg_isready` every 10 s). Then run the migrations to create all tables:
 ```bash
 pnpm backend:db:migrate
 ```
@@ -284,13 +284,17 @@ This starts two processes in parallel:
 | Frontend (Next.js) | http://localhost:3000 | The web UI |
 | Backend (Express) | http://localhost:4000 | REST API + WebSocket |
 
-Wait about 10–15 seconds for both to finish compiling. Then open http://localhost:3000 in the browser that has Lace installed.
+Wait about 10–15 seconds for both to finish compiling.
 
-**Quick health check:**
+**Verify both services are up before opening the browser:**
 ```bash
 curl http://localhost:4000/health
 # expected: {"status":"ok","ts":"…"}
 ```
+
+> If the backend exits immediately, check its output for env var errors (`GOOGLE_CLIENT_ID is required`, `SESSION_SECRET must be at least 32 characters`). Fix `backend/.env` and re-run `pnpm dev`.
+
+Once the health check passes, open http://localhost:3000 in the browser that has Lace installed.
 
 You're now running the full stack locally.
 
