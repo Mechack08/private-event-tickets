@@ -8,6 +8,7 @@ import { Nav } from "@/components/Nav";
 import { useAuth } from "@/contexts/AuthContext";
 import { api, type EventRecord } from "@/lib/api";
 import { getMyEvents, type StoredEvent } from "@/lib/storage";
+import { cn } from "@/lib/utils";
 
 /**
  * Build a safe CreateEventInput from a StoredEvent.
@@ -93,6 +94,21 @@ export default function EventsPage() {
     if (addr) router.push(`/events/${encodeURIComponent(addr)}`);
   }
 
+  const now = new Date();
+  const happening = events.filter((e) => {
+    const s = e.startDate ? new Date(e.startDate) : null;
+    const en = e.endDate ? new Date(e.endDate) : null;
+    return s && s <= now && (!en || en > now);
+  });
+  const upcoming = events.filter((e) => {
+    const s = e.startDate ? new Date(e.startDate) : null;
+    return !s || s > now;
+  });
+  const past = events.filter((e) => {
+    const en = e.endDate ? new Date(e.endDate) : null;
+    return en && en <= now;
+  });
+
   return (
     <>
       <Nav />
@@ -166,61 +182,42 @@ export default function EventsPage() {
               )}
             </div>
           ) : (
-            (() => {
-              const now = new Date();
-              const happening = events.filter(e => {
-                const s = e.startDate ? new Date(e.startDate) : null;
-                const en = e.endDate  ? new Date(e.endDate)   : null;
-                return s && s <= now && (!en || en > now);
-              });
-              const upcoming = events.filter(e => {
-                const s = e.startDate ? new Date(e.startDate) : null;
-                return !s || s > now;
-              });
-              const past = events.filter(e => {
-                const en = e.endDate ? new Date(e.endDate) : null;
-                return en && en <= now;
-              });
-
-              return (
-                <div className="space-y-6">
-                  {happening.length > 0 && (
-                    <section>
-                      <p className="text-[11px] font-mono text-emerald-600 uppercase tracking-widest mb-2 px-1">Happening now</p>
-                      <div className="space-y-2">
-                        {happening.map((e) => <EventCard key={e.contractAddress} event={e} />)}
-                      </div>
-                    </section>
-                  )}
-                  {upcoming.length > 0 && (
-                    <section>
-                      <p className="text-[11px] font-mono text-sky-700 uppercase tracking-widest mb-2 px-1">Upcoming</p>
-                      <div className="space-y-2">
-                        {upcoming.map((e) => <EventCard key={e.contractAddress} event={e} />)}
-                      </div>
-                    </section>
-                  )}
-                  {past.length > 0 && (
-                    <section>
-                      <p className="text-[11px] font-mono text-zinc-700 uppercase tracking-widest mb-2 px-1">Past</p>
-                      <div className="space-y-2">
-                        {past.map((e) => <EventCard key={e.contractAddress} event={e} />)}
-                      </div>
-                    </section>
-                  )}
-                  {localOnly.length > 0 && (
-                    <section>
-                      <p className="text-[11px] font-mono text-yellow-800 uppercase tracking-widest mb-2 px-1">
-                        Your events (not yet in public list)
-                      </p>
-                      <div className="space-y-2">
-                        {localOnly.map((e) => <LocalEventCard key={e.contractAddress} event={e} connected={connected} />)}
-                      </div>
-                    </section>
-                  )}
-                </div>
-              );
-            })()
+            <div className="space-y-6">
+              {happening.length > 0 && (
+                <section>
+                  <p className="text-[11px] font-mono text-emerald-600 uppercase tracking-widest mb-2 px-1">Happening now</p>
+                  <div className="space-y-2">
+                    {happening.map((e) => <EventCard key={e.contractAddress} event={e} />)}
+                  </div>
+                </section>
+              )}
+              {upcoming.length > 0 && (
+                <section>
+                  <p className="text-[11px] font-mono text-sky-700 uppercase tracking-widest mb-2 px-1">Upcoming</p>
+                  <div className="space-y-2">
+                    {upcoming.map((e) => <EventCard key={e.contractAddress} event={e} />)}
+                  </div>
+                </section>
+              )}
+              {past.length > 0 && (
+                <section>
+                  <p className="text-[11px] font-mono text-zinc-700 uppercase tracking-widest mb-2 px-1">Past</p>
+                  <div className="space-y-2">
+                    {past.map((e) => <EventCard key={e.contractAddress} event={e} />)}
+                  </div>
+                </section>
+              )}
+              {localOnly.length > 0 && (
+                <section>
+                  <p className="text-[11px] font-mono text-yellow-800 uppercase tracking-widest mb-2 px-1">
+                    Your events (not yet in public list)
+                  </p>
+                  <div className="space-y-2">
+                    {localOnly.map((e) => <LocalEventCard key={e.contractAddress} event={e} connected={connected} />)}
+                  </div>
+                </section>
+              )}
+            </div>
           )}
         </div>
       </main>
@@ -270,10 +267,10 @@ function EventCard({ event }: { event: EventRecord }) {
   return (
     <Link
       href={`/events/${encodeURIComponent(event.contractAddress)}`}
-      className={[
+      className={cn(
         "group block border bg-white/[0.02] hover:bg-white/[0.04] transition-colors overflow-hidden",
         status === "past" ? "border-white/5 opacity-60 hover:opacity-80" : "border-white/8",
-      ].join(" ")}
+      )}
     >
       {/* Accent line */}
       <div className="h-[2px]" style={{ background: status === "past" ? accent + "50" : accent }} />
@@ -426,7 +423,7 @@ function LocalEventCard({ event, connected }: { event: StoredEvent; connected: b
                 ? `Sync failed: ${syncError ?? "unknown error"} — click to retry`
                 : "Publish to the public event list"
             }
-            className={[
+            className={cn(
               "shrink-0 text-[11px] font-medium border px-3 py-1.5 transition-colors",
               syncState === "done"
                 ? "border-emerald-500/30 text-emerald-400 cursor-default"
@@ -435,7 +432,7 @@ function LocalEventCard({ event, connected }: { event: StoredEvent; connected: b
                 : syncState === "syncing"
                 ? "border-white/10 text-zinc-600 cursor-not-allowed"
                 : "border-white/12 text-zinc-400 hover:border-white/25 hover:text-white",
-            ].join(" ")}
+            )}
           >
             {syncState === "syncing" ? (
               <span className="flex items-center gap-1.5">
