@@ -26,7 +26,8 @@ import { toHex, fromHex, parseCoinPublicKeyToHex, parseEncPublicKeyToHex } from 
 import type { WalletConnectedAPI, ConnectedAPI, KeyMaterialProvider } from "@midnight-ntwrk/dapp-connector-api";
 import { Transaction } from "@midnight-ntwrk/ledger-v8";
 import type { FinalizedTransaction } from "@midnight-ntwrk/ledger-v8";
-import type { NetworkConfig } from "./types.js";
+import type { NetworkConfig } from "./types";
+import { createProofServerProvingProvider } from "./proof-server-provider";
 
 /** Contract namespace key used in ZK artifact URLs. */
 const CONTRACT_NAME = "event-tickets";
@@ -85,13 +86,18 @@ export async function createEventTicketProviders(
   );
 
   // ── Proof provider ────────────────────────────────────────────────────
-  // Priority order:
-  //   1. wallet.getProvingProvider()  — wallet-delegated (Lace v4+, ideal)
-  //   2. Local Docker proof server via /api/proof proxy (localhost:6300)
+  // Two proving paths, tried in order:
   //
-  // NOTE: wallet.getConfiguration().proverServerUri returns Lace's hosted
-  // proof server, but it is auth-gated — direct calls return 403.  Only
-  // Lace's own extension can call it.  We always fall back to Docker.
+  //   1. wallet.getProvingProvider()  — wallet-delegated proving.
+  //      Required by dapp-connector-api@4.x. Works with 1AM wallet.
+  //      Lace does not yet implement this method.
+  //
+  //   2. HTTP proof server via /api/proof CORS proxy.
+  //      Falls back to this when the wallet lacks getProvingProvider.
+  //      The proxy forwards to PROOF_SERVER_URL (server-side env var).
+  //      Lace's getConfiguration().proverServerUri is @deprecated and
+  //      auth-gated (returns 403 when called directly by a dapp), so
+  //      a self-hosted proof server is required for Lace users.
 
   const connectedApi = wallet as unknown as ConnectedAPI;
   if (typeof connectedApi.hintUsage === "function") {
@@ -102,31 +108,31 @@ export async function createEventTicketProviders(
     ]);
   }
 
+  const hasProvingProvider = typeof (wallet as any).getProvingProvider === "function";
+  console.info(`[midnight] hasProvingProvider=${hasProvingProvider}`);
+
   let proofProvider: ReturnType<typeof createProofProvider>;
 
-  if (typeof (wallet as any).getProvingProvider === "function") {
-    // ── Path A: wallet-delegated ZK proving (Lace v4+) ───────────────
+  if (hasProvingProvider) {
+    // Path 1: wallet-delegated ZK proving (1AM and future Lace versions)
     const provingProvider = await wallet.getProvingProvider(
       zkConfigProvider.asKeyMaterialProvider(),
     );
     proofProvider = createProofProvider(provingProvider);
   } else {
-    // ── Path B: local Docker proof server via /api/proof CORS proxy ──
-    // Lace's hosted proverServerUri requires their internal auth (returns
-    // 403 when called by a dapp).  Use a local Docker container instead:
-    //   docker run -d --rm -p 6300:6300 midnightntwrk/proof-server
-    //
-    // The /api/proof Next.js route forwards requests to localhost:6300
-    // server-side, avoiding browser CORS restrictions.
+    // Path 2: HTTP proof server via /api/proof proxy (current Lace path).
+    // Lace's proverServerUri (from getConfiguration()) is auth-gated —
+    // it accepts /check but returns 403 on /prove when called by a dApp.
+    // We always route through the operator's own proof server (PROOF_SERVER_URL
+    // env var, default http://localhost:6300) instead of forwarding Lace's URI.
     console.info(
-      "[midnight] wallet.getProvingProvider not available — " +
-      "using local Docker proof server via /api/proof proxy",
+      `[midnight] wallet.getProvingProvider not available — ` +
+      `falling back to HTTP proof server via /api/proof proxy`,
     );
-
-    const { createProofServerProvingProvider } = await import("./proof-server-provider");
     const provingProvider = createProofServerProvingProvider(
       zkConfigProvider.asKeyMaterialProvider(),
-      "/api/proof",   // proxy → localhost:6300 (no X-Proof-Server → uses default)
+      "/api/proof",
+      // No realServerUri — proxy uses PROOF_SERVER_URL (server-side env var)
     );
     proofProvider = createProofProvider(provingProvider);
   }
