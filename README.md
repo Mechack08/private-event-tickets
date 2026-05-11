@@ -19,6 +19,7 @@ The attendee's app shows an **ADMITTED** stamp automatically. No identity is eve
 - [Backend API reference](#backend-api-reference)
 - [Environment variables](#environment-variables)
 - [Security design](#security-design)
+- [Wallet notes](#wallet-notes)
 - [Known limitations](#known-limitations)
 
 ---
@@ -32,7 +33,8 @@ Organiser                                Attendee
    (sets name, capacity, min age)
 
 2. Event appears in the app
-                                         3. Connect Lace wallet
+                                         3. Connect 1AM wallet (recommended)
+                                            or Lace wallet (see notes below)
                                          4. Claim ticket — ZK-proves birth year
                                             (age ≥ min_age, no DOB disclosed)
                                          5. Private nonce saved in localStorage
@@ -128,18 +130,34 @@ Check: `docker --version`
 Install from https://www.docker.com/products/docker-desktop/  
 Make sure Docker Desktop is **running** before continuing.
 
-#### Lace browser extension with Midnight enabled
+#### Midnight wallet — 1AM (recommended) or Lace
+
+> **Recommended: 1AM wallet.** 1AM is the reference implementation of the Midnight DApp Connector API and works out-of-the-box — no Docker proof server required.  
+> Lace works too but has known limitations described in the [Wallet notes](#wallet-notes) section below.
+
+**Option A — 1AM wallet (recommended)**
+
+1. Install **1AM** from https://1am.xyz/ (https://1am.xyz/) in Chrome or Brave.
+2. Create a wallet (or restore an existing one) and choose **Midnight preprod**.
+3. Copy your **unshielded address** from 1AM — you need it for the faucet.
+
+**Option B — Lace wallet**
 
 1. Install **Lace** from https://www.lace.io in Chrome or Brave.
 2. Create a wallet (or restore an existing one).
 3. Open Lace → Settings → Network → enable **Midnight** (preprod).
-4. Copy your **shielded address** from Lace → Settings → Midnight. You need it for the faucet.
+4. Copy your **unshielded address** from Lace — you need it for the faucet.
+5. You also need a running **Docker proof server** (Step 6) because Lace does not yet implement in-wallet proof generation.
 
-#### tDUST (test tokens for gas fees)
+#### tDUST (Transaction fees)
 
-Gas fees on preprod are paid in tDUST. Get free tDUST from the Midnight faucet:  
-https://docs.midnight.network/develop/tutorial/using/faucet  
-Paste your shielded address and wait ~30 seconds.
+Gas fees on preprod are paid in DUST. DUST cannot be transferred — it is generated locally inside the wallet from **tNight** tokens.
+
+To get tNight:
+1. Go to the faucet: https://faucet.preprod.midnight.network/
+2. Paste your **unshielded** wallet address and submit.
+3. Wait ~30 seconds — you will receive **tNight** in your wallet.
+4. Inside Lace, use the tNight balance to generate DUST (used for transaction payment).
 
 ---
 
@@ -369,7 +387,7 @@ pnpm proof-server:logs   # tail the proof server logs
 
 1. Open http://localhost:3000.
 2. Click **Sign in with Google** in the top-right corner and complete the sign-in.
-3. Click **Connect Wallet** and approve the Midnight DApp connection in Lace.
+3. Click **Connect Wallet** and approve the Midnight DApp connection in your wallet (1AM or Lace).
 4. Go to **Events → New Event**.
 5. Fill in event name, maximum capacity, and minimum age (0 = open to all).
 6. Click **Create Event**. The dApp deploys a Compact contract to Midnight preprod. This takes 30–90 seconds.
@@ -392,11 +410,11 @@ On the event dashboard click **Add delegate**. This calls `grant_delegate()` on-
 ### Attendee: Claim a ticket
 
 1. Open http://localhost:3000.
-2. Sign in with Google and connect your Lace wallet.
+2. Sign in with Google and connect your wallet (1AM recommended, or Lace).
 3. Go to **Events** and find the event you want to attend.
 4. Click **Claim ticket**.
 5. Enter your birth year when prompted. This value stays in your browser — it is used as a private ZK witness and is never sent to any server.
-6. The Lace wallet generates a ZK proof and submits it to the contract (~30–120 s on preprod).
+6. The wallet generates a ZK proof and submits it to the contract (~30–120 s on preprod). With 1AM this happens entirely inside the wallet. With Lace it is handled by the local Docker proof server.
 7. Your private ticket nonce is saved in `localStorage`. Open **My Tickets** to see your ticket and QR code.
 
 ### Attendee: Show your QR at the door
@@ -542,6 +560,28 @@ node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 
 ---
 
+## Wallet notes
+
+### 1AM (recommended)
+
+1AM is the reference implementation of the [Midnight DApp Connector API v4](https://docs.midnight.network/develop/tutorial/building-a-dapp/dapp-connector/).  
+It implements `getProvingProvider()`, which means ZK proofs are generated **inside the wallet** — no Docker proof server is required for end users.
+
+### Lace
+
+Lace supports the Midnight DApp Connector API but has two known gaps as of May 2026:
+
+| Issue | Effect | Workaround |
+|---|---|---|
+| `getProvingProvider()` not implemented | ZK proofs cannot be generated inside the wallet | A self-hosted Docker proof server is required (`pnpm proof-server:start`) |
+| Hosted `proverServerUri` is auth-gated | Lace's proof server URI (returned by `getConfiguration()`) returns 403 to third-party dApps on `/prove` | Same workaround — use the local Docker server |
+
+In practice this means **Lace users must have Docker running** and the proof server started before deploying a contract or claiming a ticket. The app proxies proof requests transparently via `/api/proof` — no manual configuration is needed beyond `pnpm proof-server:start`.
+
+The Midnight team has confirmed these limitations and is working on a Lace update. Once `getProvingProvider()` is available in Lace, the Docker server will become optional for Lace users too.
+
+---
+
 ## Known limitations
 
 | Limitation | Notes |
@@ -550,7 +590,7 @@ node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 | No ticket revocation | Commitments cannot be removed from the on-chain `Set` in v1 |
 | Delegate removal | The `delegates` Set is append-only; cancel and redeploy to rotate co-managers |
 | Proof time | Client-side ZK proofs take 30–120 s on Midnight preprod |
-| Lace wallet only | Tested against Lace with Midnight network enabled |
+| Wallet support | 1AM (recommended, full support) and Lace (requires Docker proof server — see [Wallet notes](#wallet-notes)) |
 | Max capacity | `Set` size is fixed at compile time — recompile to increase the limit |
 
 ---
