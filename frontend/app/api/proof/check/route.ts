@@ -46,7 +46,7 @@ export async function GET() {
     return NextResponse.json(
       {
         status: "unreachable",
-        detail: "Proof server not reachable. Is Docker running? " + String(err),
+        detail: String(err),
       },
       { status: 503 },
     );
