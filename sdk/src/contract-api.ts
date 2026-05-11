@@ -40,7 +40,7 @@ import type {
   GrantDelegateResult,
   TicketSecret,
   VerifyTicketResult,
-} from "./types.js";
+} from "./types";
 
 // ─── Compiled contract module (lazy-loaded) ───────────────────────────────
 
