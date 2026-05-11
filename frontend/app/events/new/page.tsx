@@ -87,34 +87,60 @@ export default function NewEventPage() {
   const preflightWalletRef  = useRef<ConnectedWallet | null>(null);
   const preflightResolveRef = useRef<((w: ConnectedWallet | null) => void) | null>(null);
 
-  function launchPreflight(
+  /**
+   * Async preflight: shows the modal, connects the wallet, fetches balance,
+   * then waits for the user to explicitly click "Deploy Contract →" or "Cancel".
+   *
+   * The user-confirmation Promise is set up only AFTER "ready" state is reached
+   * so React has already painted the modal before we block on user input.
+   */
+  async function launchPreflight(
     walletKey: string,
     walletName: string,
     walletIcon?: string,
   ): Promise<ConnectedWallet | null> {
-    return new Promise((resolve) => {
-      preflightResolveRef.current = resolve;
-      setPreflight({ phase: "connecting", walletName, walletIcon, dustBalance: null, dustCap: null, dustAddress: null, error: null });
+    // Show connecting state — React will paint this before the await below.
+    setPreflight({ phase: "connecting", walletName, walletIcon, dustBalance: null, dustCap: null, dustAddress: null, error: null });
 
-      connect(walletKey)
-        .then(async (connected) => {
-          preflightWalletRef.current = connected;
-          try {
-            const [{ balance, cap }, { shieldedAddress }] = await Promise.all([
-              connected.getDustBalance(),
-              connected.getShieldedAddresses(),
-            ]);
-            setPreflight((p) => p ? { ...p, phase: "ready", dustBalance: balance, dustCap: cap, dustAddress: shieldedAddress } : null);
-          } catch {
-            // Balance unavailable — still allow deploy.
-            setPreflight((p) => p ? { ...p, phase: "ready" } : null);
-          }
-        })
-        .catch((err: unknown) => {
-          const msg = err instanceof Error ? err.message : String(err);
-          preflightWalletRef.current = null;
-          setPreflight((p) => p ? { ...p, phase: "error", error: msg } : null);
-        });
+    // Connect directly to the selected wallet key — bypasses the hook's
+    // cached walletRef so switching wallets always reads the correct balance.
+    type MW = { connect: (network: string) => Promise<ConnectedWallet> };
+    const midnightObj = (window as unknown as { midnight?: Record<string, MW> }).midnight;
+    const initialApi  = midnightObj?.[walletKey];
+    if (!initialApi) {
+      setPreflight((p) => p ? { ...p, phase: "error", error: "Wallet not found in window.midnight." } : null);
+      // handleDeploy will get null and exit; user dismisses via Cancel button.
+      return null;
+    }
+
+    let connected: ConnectedWallet;
+    try {
+      connected = await initialApi.connect("preprod");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setPreflight((p) => p ? { ...p, phase: "error", error: msg } : null);
+      return null;
+    }
+
+    preflightWalletRef.current = connected;
+
+    // Fetch balance — show "ready" regardless of whether this succeeds.
+    try {
+      const [{ balance, cap }, { shieldedAddress }] = await Promise.all([
+        connected.getDustBalance(),
+        connected.getShieldedAddresses(),
+      ]);
+      setPreflight((p) => p ? { ...p, phase: "ready", dustBalance: balance, dustCap: cap, dustAddress: shieldedAddress } : null);
+    } catch {
+      // Balance unavailable — still require explicit confirmation.
+      setPreflight((p) => p ? { ...p, phase: "ready" } : null);
+    }
+
+    // Wait for the user to click "Deploy Contract →" or "Cancel" in the modal.
+    // The resolve ref is set HERE — after "ready" is painted — so onPreflightConfirm
+    // is always wired up after the modal is visible.
+    return new Promise<ConnectedWallet | null>((resolve) => {
+      preflightResolveRef.current = resolve;
     });
   }
 
@@ -172,8 +198,13 @@ export default function NewEventPage() {
   }
 
   async function handleDeploy() {
-    let liveWallet: ConnectedWallet | null = wallet;
-    if (!liveWallet) {
+    // Prevent double-invoke while preflight or deploy is already in progress.
+    if (preflight !== null || loading) return;
+
+    // Always run through preflight (balance check + confirmation) on every
+    // attempt — even if a wallet is already connected from a prior run.
+    let liveWallet: ConnectedWallet | null = null;
+    {
       type MW = { name?: string; icon?: string };
       const midnightObj = (window as unknown as { midnight?: Record<string, MW> }).midnight;
       if (!midnightObj || Object.keys(midnightObj).length === 0) {
@@ -284,7 +315,17 @@ export default function NewEventPage() {
 
       setSuccess({ contractAddress: api.contractAddress, eventName: form.eventName.trim(), backendSyncFailed });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const raw = err instanceof Error ? err.message : String(err);
+      const isInsufficientFunds   = /insufficient|not enough|balance|funds|dust/i.test(raw);
+      const isProofServerForbidden = /403|forbidden|requires internal auth/i.test(raw);
+      const isProofServerDown     = !isProofServerForbidden && /proof.server|503|unreachable|fetch failed/i.test(raw);
+      const msg = isInsufficientFunds
+        ? "Insufficient DUST balance. You need DUST to pay transaction fees. Get tNight from the faucet at faucet.preprod.midnight.network (use your unshielded address), then generate DUST inside Lace."
+        : isProofServerForbidden
+        ? "The proof server rejected the request (403). Make sure the Docker proof server is running: docker run -d --rm -p 6300:6300 midnightntwrk/proof-server"
+        : isProofServerDown
+        ? "The ZK proof server is unreachable. Please try again in a few moments. If the issue persists, contact the site operator."
+        : raw;
       setError(msg);
       setProgress((prev) =>
         prev.map((s) => (s.status === "active" ? { ...s, status: "error" } : s))

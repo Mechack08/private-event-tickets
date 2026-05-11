@@ -14,6 +14,7 @@ export function WalletPreflightModal({
   onCancel: () => void;
 }) {
   const hasBalance = state.dustBalance !== null;
+  const zeroDust = hasBalance && state.dustBalance === 0n;
   const sufficient = !hasBalance || state.dustBalance! >= DEPLOY_COST_ESTIMATE;
   // Bar fills to 100% when balance = 3× estimated cost.
   const pct = hasBalance
@@ -145,12 +146,16 @@ export function WalletPreflightModal({
               </div>
 
               {!sufficient && hasBalance && (
-                <p className="flex items-start gap-2 text-[11px] text-amber-300/60 bg-amber-500/[0.04] border border-amber-500/15 px-3 py-2.5 leading-relaxed">
-                  <svg className="w-3.5 h-3.5 mt-0.5 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <div className="flex items-start gap-2 text-[11px] border px-3 py-2.5 leading-relaxed bg-red-500/[0.05] border-red-500/20">
+                  <svg className="w-3.5 h-3.5 mt-0.5 shrink-0 text-red-400" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
                   </svg>
-                  Balance may be too low. The transaction might fail. Earn more DUST from NIGHT staking before proceeding.
-                </p>
+                  <span className="text-red-300/70">
+                    {zeroDust
+                      ? <>No DUST in wallet. The transaction will fail. To get DUST: visit <span className="font-mono text-red-300">faucet.preprod.midnight.network</span> with your <strong>unshielded</strong> address to receive tNight, then generate DUST inside Lace.</>
+                      : <>Balance may be too low — the transaction might fail. Generate more DUST from tNight inside Lace.</>}
+                  </span>
+                </div>
               )}
             </div>
           )}
@@ -161,8 +166,9 @@ export function WalletPreflightModal({
           {state.phase === "ready" && (
             <motion.button
               onClick={onConfirm}
+              disabled={zeroDust}
               whileTap={{ scale: 0.98 }}
-              className="flex-1 bg-white text-black text-sm font-semibold py-3 hover:bg-zinc-100 transition-colors"
+              className="flex-1 bg-white text-black text-sm font-semibold py-3 hover:bg-zinc-100 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
             >
               Deploy Contract →
             </motion.button>
